@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Secrets / local config
+.env
+data/llm_providers.yaml
+
+# Data (本地数据，不入 git)
+data/
+!data/.gitkeep
+
+# MediaCrawler 自身数据（如开启 git init 后）
+MediaCrawler/browser_data/
+MediaCrawler/data/
+MediaCrawler/.venv/
+
+# OS
+.DS_Store
+
+# Models / caches
+*.whisper-model
+# MediaCrawler (外部依赖，用户自行下载)
+MediaCrawler/
+data/asr_config.yaml

@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{{ row.title }}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+         background: #f5f5f5; color: #222; line-height: 1.7; }
+  .header { background: white; padding: 16px 32px; border-bottom: 1px solid #e0e0e0; }
+  .header a { color: #0366d6; text-decoration: none; font-size: 14px; }
+  .container { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
+  .content { background: white; border-radius: 12px; padding: 32px; border: 1px solid #eee; }
+  h1 { font-size: 22px; margin-bottom: 8px; line-height: 1.4; }
+  .meta { color: #666; font-size: 13px; margin: 8px 0 16px; display: flex; flex-wrap: wrap; gap: 16px; }
+  .meta span { display: flex; align-items: center; gap: 4px; }
+  .meta a { color: #0366d6; text-decoration: none; }
+  .divider { border-top: 1px solid #eee; margin: 24px 0; }
+  h2 { font-size: 18px; margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid #eee; }
+  .article { line-height: 1.9; font-size: 15px; }
+  .article p { margin: 14px 0; }
+  .article h3 { font-size: 16px; margin: 20px 0 10px; color: #333; }
+  ul { padding-left: 20px; }
+  li { margin-bottom: 8px; font-size: 15px; }
+  .kp-block { margin-bottom: 16px; padding: 16px; background: #f9f9f9; border-radius: 8px;
+              border-left: 3px solid #0366d6; }
+  .kp-block h3 { margin: 0 0 8px; font-size: 16px; border: none; padding: 0; }
+  .kp-block .why, .kp-block .direction { font-size: 14px; margin: 4px 0; }
+  .kp-block .direction { color: #0366d6; }
+  pre { white-space: pre-wrap; font-size: 13px; line-height: 1.6;
+        background: #f7f7f7; padding: 16px; border-radius: 8px;
+        max-height: 500px; overflow-y: auto; margin-top: 12px; }
+  .empty { color: #999; font-style: italic; }
+  .version-bar { background: #f9f9f9; padding: 12px 16px; border-radius: 8px;
+                 margin-bottom: 20px; font-size: 13px; border: 1px solid #eee; }
+  .version-bar .label { color: #666; margin-right: 8px; font-weight: 600; }
+  .version-bar a { margin: 4px 6px 4px 0; text-decoration: none; padding: 4px 10px;
+                   border-radius: 6px; display: inline-block; font-size: 12px; }
+  .version-bar a.active { background: #0366d6; color: white; }
+  .version-bar a:not(.active) { background: white; color: #0366d6; border: 1px solid #ddd; }
+  .version-bar a .star { color: #f0a020; }
+  .duration-bar { display: flex; gap: 20px; padding: 12px 16px; background: #f9f9f9;
+                  border-radius: 8px; margin-bottom: 20px; font-size: 13px; border: 1px solid #eee; }
+  .duration-bar .item { display: flex; align-items: center; gap: 6px; }
+  .duration-bar .item .icon { font-size: 16px; }
+  .duration-bar .item .val { font-weight: 600; color: #333; }
+</style>
+</head>
+<body>
+<div class="header">
+  <a href="/">← 首页</a>
+  {% if creator %} · <a href="/creator/{{ creator.sec_user_id }}">{{ creator.nickname or '博主' }}</a>{% endif %}
+</div>
+<div class="container">
+<div class="content">
+<h1>{{ row.title }}</h1>
+<div class="meta">
+  <span>📅 {{ row.create_time | fmt_create_time }}</span>
+  <span>👍 {{ row.liked_count }}</span>
+  <span>💬 {{ row.comment_count }}</span>
+  <span>🔗 <a href="{{ row.aweme_url }}">原视频 ↗</a></span>
+</div>
+
+<div class="duration-bar">
+  <div class="item"><span class="icon">⏱</span>视频 <span class="val">{{ row.video_duration | fmt_duration }}</span></div>
+  <div class="item"><span class="icon">🎙</span>ASR <span class="val">{{ row.transcribe_duration | fmt_duration }}</span></div>
+  {% if summarize_duration %}<div class="item"><span class="icon">✍️</span>LLM <span class="val">{{ summarize_duration | fmt_duration }}</span></div>{% endif %}
+</div>
+
+{% if all_summaries %}
+<div class="version-bar">
+  <span class="label">LLM 版本</span><br>
+  {% for s in all_summaries %}
+    <a href="/video/{{ row.aweme_id }}?provider={{ s.provider }}"
+       class="{{ 'active' if s.provider == current_provider else '' }}">
+      {{ s.model }}
+      {% if s.is_primary %}<span class="star">★</span>{% endif %}
+      {{ s.article_len }}字 · {{ s.summarize_duration | fmt_duration }}
+    </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if summary %}
+<h2>摘要</h2>
+<p>{{ summary }}</p>
+
+<div class="divider"></div>
+<h2>正文</h2>
+<div class="article">
+  {% for para in article.split('\n\n') %}
+    {% if para.strip() %}
+      {% if para.strip().startswith('#') %}
+        <h3>{{ para.strip().lstrip('#').strip() }}</h3>
+      {% else %}
+        <p>{{ para.strip() }}</p>
+      {% endif %}
+    {% endif %}
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">尚未生成摘要（status={{ row.status }}）</p>
+{% endif %}
+
+{% if key_points %}
+<div class="divider"></div>
+<h2>要点</h2>
+<ul>
+  {% for kp in key_points %}<li>{{ kp }}</li>{% endfor %}
+</ul>
+{% endif %}
+
+{% if knowledge_points %}
+<div class="divider"></div>
+<h2>值得探究的知识点</h2>
+{% for kp in knowledge_points %}
+<div class="kp-block">
+  <h3>{{ loop.index }}. {{ kp.topic }}</h3>
+  {% if kp.why %}<p class="why"><b>为什么</b>：{{ kp.why }}</p>{% endif %}
+  {% if kp.direction %}<p class="direction"><b>深入方向</b>：{{ kp.direction }}</p>{% endif %}
+</div>
+{% endfor %}
+{% endif %}
+
+{% if transcript %}
+<div class="divider"></div>
+<details>
+  <summary><b>完整文字稿</b> ({{ transcript.count('\n') + 1 }} 段)</summary>
+  <pre>{{ transcript }}</pre>
+</details>
+{% else %}
+<p class="empty">未生成文字稿</p>
+{% endif %}
+</div>
+</div>
+</body>
+</html>

@@ -1,0 +1,62 @@
+active_provider: opencode_go_deepseek_v4_pro
+
+providers:
+  deepseek_chat:
+    api_base: https://api.deepseek.com/v1
+    api_key_env: DEEPSEEK_API_KEY
+    model: deepseek-chat
+    temperature: 0.3
+    max_tokens: 8000
+    json_mode: true
+    protocol: openai
+
+  opencode_go_glm52:
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    model: glm-5.2
+    temperature: 0.3
+    max_tokens: 12000
+    json_mode: true
+    protocol: openai
+
+  opencode_go_deepseek_v4_pro:
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    model: deepseek-v4-pro
+    temperature: 0.3
+    max_tokens: 12000
+    json_mode: true
+    protocol: openai
+
+  opencode_go_mimo_v25_pro:
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    model: mimo-v2.5-pro
+    temperature: 0.3
+    max_tokens: 12000
+    json_mode: true
+    protocol: openai
+
+  opencode_go_minimax_m3:
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    model: minimax-m3
+    temperature: 0.3
+    max_tokens: 12000
+    json_mode: false
+    protocol: anthropic
+
+  opencode_go_qwen37_max:
+    api_base: https://opencode.ai/zen/go/v1
+    api_key_env: OPENCODE_GO_API_KEY
+    model: qwen3.7-max
+    temperature: 0.3
+    max_tokens: 12000
+    json_mode: false
+    protocol: anthropic
+
+# protocol: openai  → /v1/chat/completions（OpenAI 兼容）
+# protocol: anthropic → /v1/messages（Anthropic 兼容）
+# json_mode: true → 请求加 response_format=json_object（需模型支持）
+# 切换默认版本：改 active_provider
+# 所有 provider 跑一遍：python -m src.summarize_worker <aweme_id> --all-providers

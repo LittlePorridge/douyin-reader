@@ -1,0 +1,397 @@
+from __future__ import annotations
+
+import datetime
+import json
+import sqlite3
+import subprocess
+import threading
+import time
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from pydantic import BaseModel
+
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.config import load_config
+from src.db import connect, add_creator, update_creator, now_ts
+from src.orchestrator import _extract_sec_user_id, _fetch_creator_info, _update_creator_info
+
+cfg = load_config()
+TEMPLATES_DIR = Path(__file__).parent / "templates"
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATES_DIR)),
+    autoescape=select_autoescape(["html", "xml"]),
+)
+
+app = FastAPI(title="douyin-reader")
+
+# 后台任务状态
+_task_status: dict = {
+    "running": False, "type": "", "message": "", "started_at": 0, "log": [],
+    "pid": 0, "process": None,
+}
+
+
+def _connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(cfg.db_path, timeout=10.0)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _fmt_ts(ts: int | None) -> str:
+    if not ts:
+        return ""
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_create_time(ts: int | None) -> str:
+    if not ts:
+        return ""
+    return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+
+
+def _fmt_duration(seconds) -> str:
+    if seconds is None or seconds == 0:
+        return "-"
+    seconds = float(seconds)
+    if seconds < 60:
+        return f"{seconds:.1f}秒"
+    m, s = divmod(seconds, 60)
+    if m < 60:
+        return f"{int(m)}分{int(s)}秒"
+    h, m = divmod(m, 60)
+    return f"{int(h)}时{int(m)}分{int(s)}秒"
+
+
+env.filters["fmt_ts"] = _fmt_ts
+env.filters["fmt_create_time"] = _fmt_create_time
+env.filters["fmt_duration"] = _fmt_duration
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request):
+    """博主卡片首页"""
+    with _connect() as conn:
+        creators = conn.execute(
+            """SELECT c.sec_user_id, c.nickname, c.homepage_url, c.last_crawled_at,
+                      c.avatar_url, c.intro, c.category, c.note,
+                      (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id) as video_count,
+                      (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id AND v.status='done') as done_count,
+                      (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id AND v.status NOT IN ('done')) as pending_count,
+                      (SELECT max(v.create_time) FROM videos v WHERE v.sec_user_id=c.sec_user_id) as latest_video_time
+               FROM creators c
+               ORDER BY video_count DESC, c.first_seen_at"""
+        ).fetchall()
+    tmpl = env.get_template("home.html")
+    return tmpl.render(request=request, creators=creators)
+
+
+@app.get("/creator/{sec_user_id}", response_class=HTMLResponse)
+def creator_view(sec_user_id: str, request: Request, status: str | None = None):
+    """博主详情页：该博主的视频列表"""
+    with _connect() as conn:
+        creator = conn.execute(
+            "SELECT * FROM creators WHERE sec_user_id=?", (sec_user_id,)
+        ).fetchone()
+        if creator is None:
+            raise HTTPException(404, "creator not found")
+
+        sql = """SELECT aweme_id, title, status, create_time, liked_count,
+                        summary, video_duration, transcribe_duration,
+                        (SELECT summarize_duration FROM llm_summaries s WHERE s.aweme_id=v.aweme_id AND s.is_primary=1) as summarize_duration
+                 FROM videos v WHERE sec_user_id=?"""
+        params: list = [sec_user_id]
+        if status:
+            sql += " AND status=?"
+            params.append(status)
+        sql += " ORDER BY create_time DESC"
+        rows = conn.execute(sql, params).fetchall()
+
+        status_counts = {}
+        for r in conn.execute(
+            "SELECT status, count(*) as n FROM videos WHERE sec_user_id=? GROUP BY status", (sec_user_id,)
+        ).fetchall():
+            status_counts[r["status"]] = r["n"]
+
+    tmpl = env.get_template("creator.html")
+    return tmpl.render(
+        request=request, creator=creator, rows=rows,
+        status_counts=status_counts, current_status=status,
+    )
+
+
+@app.get("/video/{aweme_id}", response_class=HTMLResponse)
+def detail_view(aweme_id: str, request: Request, provider: str | None = None):
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM videos WHERE aweme_id=?", (aweme_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "video not found")
+        creator = conn.execute(
+            "SELECT * FROM creators WHERE sec_user_id=?", (row["sec_user_id"],)
+        ).fetchone()
+
+        all_summaries = conn.execute(
+            "SELECT id, provider, model, is_primary, length(article) as article_len, "
+            "length(summary) as summary_len, summarize_duration "
+            "FROM llm_summaries WHERE aweme_id=? ORDER BY is_primary DESC, id",
+            (aweme_id,),
+        ).fetchall()
+
+        chosen = None
+        if provider:
+            chosen = conn.execute(
+                "SELECT * FROM llm_summaries WHERE aweme_id=? AND provider=?",
+                (aweme_id, provider),
+            ).fetchone()
+        if chosen is None:
+            chosen = conn.execute(
+                "SELECT * FROM llm_summaries WHERE aweme_id=? AND is_primary=1",
+                (aweme_id,),
+            ).fetchone()
+        if chosen is None and all_summaries:
+            chosen = conn.execute(
+                "SELECT * FROM llm_summaries WHERE id=?", (all_summaries[0]["id"],)
+            ).fetchone()
+
+    summarize_duration = chosen["summarize_duration"] if chosen else None
+
+    transcript = ""
+    if row["transcript_path"]:
+        tp = cfg.project_root / row["transcript_path"]
+        if tp.exists():
+            transcript = tp.read_text(encoding="utf-8")
+
+    key_points = json.loads(chosen["key_points"]) if chosen and chosen["key_points"] else []
+    knowledge_points = json.loads(chosen["knowledge_points"]) if chosen and chosen["knowledge_points"] else []
+    article = chosen["article"] if chosen else None
+    summary = chosen["summary"] if chosen else None
+
+    tmpl = env.get_template("detail.html")
+    return tmpl.render(
+        request=request, row=row, creator=creator,
+        transcript=transcript, article=article, summary=summary,
+        key_points=key_points, knowledge_points=knowledge_points,
+        all_summaries=all_summaries,
+        current_provider=chosen["provider"] if chosen else None,
+        current_model=chosen["model"] if chosen else None,
+        summarize_duration=summarize_duration,
+    )
+
+
+@app.post("/video/{aweme_id}/set-primary/{summary_id}")
+def set_primary(aweme_id: str, summary_id: int):
+    from src.summarize_worker import set_primary_summary
+    set_primary_summary(cfg, aweme_id, summary_id)
+    return {"ok": True}
+
+
+class AddCreatorRequest(BaseModel):
+    url: str
+    nickname: str | None = None
+    category: str | None = None
+    note: str | None = None
+
+
+class UpdateCreatorRequest(BaseModel):
+    nickname: str | None = None
+    category: str | None = None
+    note: str | None = None
+    enabled: int | None = None
+
+
+class RunRequest(BaseModel):
+    sec_user_id: str
+    login_type: str = "cookie"
+    max_videos: int = 0
+    stages: str = "crawl,transcribe,summarize"
+    batch: int = 5
+    transcribe_limit: int = 0
+    summarize_limit: int = 0
+    asr_provider: str = ""  # local_whisper / groq_whisper / 空则用配置文件
+
+
+def _run_background_task(task_type: str, cmd: list[str], cwd: str = None) -> None:
+    """在后台线程里跑 subprocess"""
+    if _task_status["running"]:
+        return
+    _task_status.update(
+        running=True, type=task_type, message="running",
+        started_at=time.time(), log=[], pid=0, process=None,
+    )
+    def _worker():
+        try:
+            process = subprocess.Popen(
+                cmd, cwd=cwd or str(cfg.project_root),
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, bufsize=1,
+            )
+            _task_status["pid"] = process.pid
+            _task_status["process"] = process
+            for line in process.stdout:
+                _task_status["log"].append(line.rstrip())
+                if len(_task_status["log"]) > 500:
+                    _task_status["log"] = _task_status["log"][-300:]
+            process.wait()
+            _task_status["message"] = f"exit={process.returncode}"
+        except Exception as e:
+            _task_status["message"] = f"error: {e}"
+        finally:
+            _task_status["running"] = False
+            _task_status["process"] = None
+    threading.Thread(target=_worker, daemon=True).start()
+
+
+@app.post("/api/creator/add")
+def api_add_creator(req: AddCreatorRequest):
+    sec = _extract_sec_user_id(req.url)
+    if not sec:
+        raise HTTPException(400, "cannot parse sec_user_id from URL")
+    add_creator(cfg, sec_user_id=sec, homepage_url=req.url,
+                nickname=req.nickname, category=req.category, note=req.note)
+    # 后台获取博主信息
+    info = _fetch_creator_info(cfg, sec)
+    if info and "error" not in info:
+        _update_creator_info(cfg, sec, info)
+    return {"ok": True, "sec_user_id": sec, "info": info}
+
+
+@app.post("/api/creator/{sec_user_id}/update")
+def api_update_creator(sec_user_id: str, req: UpdateCreatorRequest):
+    fields = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not fields:
+        raise HTTPException(400, "no fields to update")
+    update_creator(cfg, sec_user_id, **fields)
+    return {"ok": True}
+
+
+@app.post("/api/creator/{sec_user_id}/refresh-info")
+def api_refresh_info(sec_user_id: str):
+    info = _fetch_creator_info(cfg, sec_user_id)
+    if info and "error" not in info:
+        _update_creator_info(cfg, sec_user_id, info)
+        return {"ok": True, "info": info}
+    raise HTTPException(500, f"fetch failed: {info}")
+
+
+@app.post("/api/creator/{sec_user_id}/run")
+def api_run_creator(sec_user_id: str, req: RunRequest):
+    if _task_status["running"]:
+        raise HTTPException(409, f"task already running: {_task_status['type']}")
+    cmd = [sys.executable, "-m", "src.orchestrator", "run",
+           "--sec-user-id", sec_user_id, "--login-type", req.login_type,
+           "--stages", req.stages, "--batch", str(req.batch)]
+    if req.max_videos > 0:
+        cmd.extend(["--max-videos", str(req.max_videos)])
+    if req.transcribe_limit > 0:
+        cmd.extend(["--transcribe-limit", str(req.transcribe_limit)])
+    if req.summarize_limit > 0:
+        cmd.extend(["--summarize-limit", str(req.summarize_limit)])
+    if req.asr_provider:
+        cmd.extend(["--asr-provider", req.asr_provider])
+    stage_label = req.stages.replace(",", "+")
+    _run_background_task(f"run:{stage_label}:{sec_user_id[:12]}", cmd)
+    return {"ok": True, "message": "task started"}
+
+
+@app.post("/api/run-all")
+def api_run_all():
+    if _task_status["running"]:
+        raise HTTPException(409, f"task already running: {_task_status['type']}")
+    cmd = [sys.executable, "-m", "src.orchestrator", "run-all"]
+    _run_background_task("run-all", cmd)
+    return {"ok": True, "message": "task started"}
+
+
+@app.get("/api/status")
+def api_status():
+    """全局状态概览"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT status, count(*) as n FROM videos GROUP BY status"
+        ).fetchall()
+    counts = {r["status"]: r["n"] for r in rows}
+    return {
+        "downloaded": counts.get("downloaded", 0) + counts.get("new", 0),
+        "transcribed": counts.get("transcribed", 0),
+        "failed": counts.get("transcribe_failed", 0) + counts.get("summarize_failed", 0),
+        "done": counts.get("done", 0),
+        "task_running": _task_status["running"],
+        "task_type": _task_status["type"],
+    }
+
+
+@app.post("/api/reauth")
+def api_reauth():
+    import shutil
+    browser_data = cfg.mediacrawler_dir / "browser_data" / "dy_user_data_dir"
+    if browser_data.exists():
+        shutil.rmtree(browser_data)
+        return {"ok": True, "message": "login state cleared, use --login-type qrcode next time"}
+    return {"ok": True, "message": "no login state found"}
+
+
+@app.post("/api/task-stop")
+def api_task_stop():
+    """停止当前后台任务"""
+    if not _task_status["running"]:
+        return {"ok": True, "message": "no task running"}
+    process = _task_status.get("process")
+    if process:
+        # 杀进程树（含子进程）
+        import signal
+        try:
+            # 先杀子进程再杀主进程
+            import subprocess as sp
+            sp.run(["pkill", "-P", str(process.pid)], capture_output=True)
+            process.terminate()
+            process.wait(timeout=5)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
+    _task_status["running"] = False
+    _task_status["message"] = "stopped by user"
+    return {"ok": True, "message": "task stopped"}
+
+
+@app.get("/api/task-status")
+def api_task_status():
+    """任务状态 + 全局进度"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT status, count(*) as n FROM videos GROUP BY status"
+        ).fetchall()
+    counts = {r["status"]: r["n"] for r in rows}
+    return {
+        "running": _task_status["running"],
+        "type": _task_status["type"],
+        "message": _task_status["message"],
+        "elapsed": time.time() - _task_status["started_at"] if _task_status["started_at"] else 0,
+        "log_tail": _task_status["log"][-30:],
+        "progress": {
+            "downloaded": counts.get("downloaded", 0) + counts.get("new", 0),
+            "transcribed": counts.get("transcribed", 0),
+            "summarizing": counts.get("summarizing", 0),
+            "transcribing": counts.get("transcribing", 0),
+            "done": counts.get("done", 0),
+            "failed": counts.get("transcribe_failed", 0) + counts.get("summarize_failed", 0),
+            "total": sum(counts.values()),
+        },
+    }
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)

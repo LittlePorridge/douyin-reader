@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>抖音阅读</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+         max-width: 1100px; margin: 0 auto; padding: 20px; color: #222; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  .filters { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+  .filters form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, input[type=text] { padding: 4px 8px; font-size: 14px; }
+  .stats { color: #666; font-size: 13px; margin-bottom: 16px; }
+  .stats span { margin-right: 12px; padding: 2px 8px; background: #f0f0f0; border-radius: 4px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; font-size: 14px; }
+  th { color: #888; font-weight: normal; }
+  td.title a { color: #0366d6; text-decoration: none; }
+  td.title a:hover { text-decoration: underline; }
+  .status { font-size: 11px; padding: 2px 6px; border-radius: 3px; color: white; }
+  .status-done { background: #28a745; }
+  .status-new, .status-downloaded { background: #0366d6; }
+  .status-transcribing, .status-summarizing { background: #f0a020; }
+  .status-transcribe_failed, .status-summarize_failed, .status-manual_failed { background: #d73a49; }
+  .summary-preview { color: #666; font-size: 12px; line-height: 1.5; margin-top: 4px; }
+  .empty { padding: 40px 0; text-align: center; color: #999; }
+</style>
+</head>
+<body>
+<h1>抖音阅读</h1>
+
+<div class="stats">
+  {% for s, n in status_counts.items() %}
+  <span>{{ s }}: {{ n }}</span>
+  {% endfor %}
+</div>
+
+<div class="filters">
+  <form method="get" action="/">
+    <select name="creator">
+      <option value="">全部博主</option>
+      {% for c in creators %}
+      <option value="{{ c.sec_user_id }}" {{ 'selected' if c.sec_user_id == current_creator else '' }}>
+        {{ c.nickname or c.sec_user_id[:20] }}
+      </option>
+      {% endfor %}
+    </select>
+    <select name="status">
+      <option value="">全部状态</option>
+      {% for s in status_counts.keys() %}
+      <option value="{{ s }}" {{ 'selected' if s == current_status else '' }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <input type="text" name="q" placeholder="搜索标题/摘要" value="{{ current_q or '' }}">
+    <button type="submit">筛选</button>
+  </form>
+</div>
+
+{% if rows %}
+<table>
+  <thead>
+    <tr>
+      <th>发布</th>
+      <th>标题 / 摘要预览</th>
+      <th>博主</th>
+      <th>点赞</th>
+      <th>状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.create_time | fmt_create_time }}</td>
+      <td class="title">
+        <a href="/video/{{ r.aweme_id }}">{{ r.title }}</a>
+        {% if r.summary %}<div class="summary-preview">{{ r.summary[:120] }}…</div>{% endif %}
+      </td>
+      <td>{{ r.nickname or '-' }}</td>
+      <td>{{ r.liked_count }}</td>
+      <td><span class="status status-{{ r.status }}">{{ r.status }}</span></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty">没有数据，或筛选条件无匹配。</div>
+{% endif %}
+</body>
+</html>

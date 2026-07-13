@@ -1,0 +1,25 @@
+active_provider: local_whisper
+
+providers:
+  local_whisper:
+    model_size: large-v3
+    device: cpu
+    compute_type: int8
+
+  groq_whisper:
+    api_base: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+    model: whisper-large-v3
+    # Groq 免费，注册拿 key: https://console.groq.com
+    # whisper-large-v3 极快：1小时音频约3分钟处理完
+    # 限制：单文件 25MB（大文件自动转 mp3 压缩）
+
+  dashscope_paraformer:
+    api_base: https://dashscope.aliyuncs.com/api/v1
+    api_key_env: DASHSCOPE_API_KEY
+    model: paraformer-v2
+    # 阿里云 DashScope，需要文件 URL，暂未实现
+
+# 切换 ASR provider：改 active_provider 即可
+# local_whisper: 免费，本地跑，慢（1分钟视频约1分钟处理）
+# groq_whisper: 免费额度，云端跑，极快（1小时音频约3分钟处理）
