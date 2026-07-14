@@ -72,6 +72,25 @@ env.filters["fmt_ts"] = _fmt_ts
 env.filters["fmt_create_time"] = _fmt_create_time
 env.filters["fmt_duration"] = _fmt_duration
 
+STATUS_ZH = {
+    "new": "待处理",
+    "downloaded": "待转写",
+    "transcribing": "转写中",
+    "transcribed": "待摘要",
+    "summarizing": "摘要中",
+    "done": "已完成",
+    "transcribe_failed": "转写失败",
+    "summarize_failed": "摘要失败",
+    "manual_failed": "人工处理",
+}
+
+
+def _status_zh(status: str) -> str:
+    return STATUS_ZH.get(status, status)
+
+
+env.filters["status_zh"] = _status_zh
+
 
 @app.get("/", response_class=HTMLResponse)
 def home(request: Request):
@@ -326,6 +345,7 @@ def api_status():
         "done": counts.get("done", 0),
         "task_running": _task_status["running"],
         "task_type": _task_status["type"],
+        "status_detail": {k: {"count": v, "label": STATUS_ZH.get(k, k)} for k, v in counts.items()},
     }
 
 

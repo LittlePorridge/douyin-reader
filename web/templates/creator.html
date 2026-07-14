@@ -26,15 +26,14 @@
   .creator-info p a { color: #0366d6; }
   .creator-actions { display: flex; gap: 8px; flex-shrink: 0; }
 
-  .btn { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer;
+  .btn { padding: 8px 16px; border-radius: 6px; border: none; cursor: pointer;
          font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
   .btn-primary { background: #0366d6; color: white; }
   .btn-primary:hover { background: #0256b3; }
   .btn-secondary { background: white; color: #0366d6; border: 1px solid #ddd; }
   .btn-secondary:hover { background: #f5f5f5; }
   .btn-danger { background: white; color: #d73a49; border: 1px solid #d73a49; }
-  .btn-danger:hover { background: #fef0f0; }
-  .btn-sm { padding: 4px 10px; font-size: 13px; }
+  .btn-sm { padding: 5px 12px; font-size: 13px; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .filters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
@@ -56,39 +55,51 @@
                    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .video-meta { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: #999; }
   .video-meta span { display: flex; align-items: center; gap: 4px; }
-  .status { font-size: 11px; padding: 2px 8px; border-radius: 3px; color: white; }
+  .status { font-size: 11px; padding: 2px 8px; border-radius: 3px; color: white; font-weight: 500; }
   .status-done { background: #28a745; }
-  .status-new, .status-downloaded { background: #0366d6; }
+  .status-new, .status-downloaded { background: #6c757d; }
   .status-transcribing, .status-summarizing { background: #f0a020; }
   .status-transcribe_failed, .status-summarize_failed, .status-manual_failed { background: #d73a49; }
   .empty { text-align: center; padding: 40px; color: #999; }
 
-  .task-banner { display: none; background: #fff3cd; border: 1px solid #ffeaa7;
-                 padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; }
+  /* Task banner - 更醒目 */
+  .task-banner { display: none; padding: 16px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 14px;
+                 border: 2px solid; }
   .task-banner.show { display: block; }
-  .task-banner.done { background: #d4edda; border-color: #c3e6cb; }
-  .task-banner.stopped { background: #f8d7da; border-color: #f5c6cb; }
-  .task-banner .spinner { display: inline-block; width: 12px; height: 12px;
-                          border: 2px solid #f0a020; border-top: 2px solid transparent;
-                          border-radius: 50%; animation: spin 1s linear infinite; margin-right: 6px; }
+  .task-banner.running { background: #fff8e1; border-color: #f0a020; }
+  .task-banner.done { background: #d4edda; border-color: #28a745; }
+  .task-banner.stopped { background: #f8d7da; border-color: #d73a49; }
+  .task-banner .task-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 15px; font-weight: 600; }
+  .task-banner .spinner { display: inline-block; width: 16px; height: 16px;
+                          border: 3px solid #f0a020; border-top-color: transparent;
+                          border-radius: 50%; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
-  .task-progress { margin-top: 8px; display: flex; gap: 16px; flex-wrap: wrap; }
-  .task-progress .item { font-size: 12px; color: #666; }
-  .task-progress .item b { color: #333; }
-  .task-stop-btn { margin-top: 8px; padding: 4px 12px; font-size: 12px;
-                   background: #d73a49; color: white; border: none; border-radius: 4px; cursor: pointer; }
+  .task-progress { margin-top: 10px; display: flex; gap: 20px; flex-wrap: wrap; }
+  .task-progress .item { font-size: 13px; color: #666; }
+  .task-progress .item b { font-size: 18px; color: #333; margin-right: 4px; }
+  .task-log { margin-top: 8px; padding: 8px 12px; background: rgba(0,0,0,.05); border-radius: 6px;
+              font-size: 12px; color: #666; font-family: monospace; max-height: 60px; overflow-y: auto; }
+  .task-stop-btn { margin-top: 10px; padding: 6px 16px; font-size: 13px;
+                   background: #d73a49; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; }
   .task-stop-btn:hover { background: #c62828; }
 
+  /* Modal - 更醒目 */
   .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-                   background: rgba(0,0,0,.4); z-index: 200; justify-content: center; align-items: center; }
+                   background: rgba(0,0,0,.5); z-index: 200; justify-content: center; align-items: center; }
   .modal-overlay.show { display: flex; }
-  .modal { background: white; border-radius: 12px; padding: 24px; width: 480px; max-width: 90vw; }
-  .modal h2 { font-size: 18px; margin-bottom: 16px; }
-  .modal .field { margin-bottom: 12px; }
-  .modal label { display: block; font-size: 13px; color: #666; margin-bottom: 4px; }
-  .modal input, .modal textarea { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+  .modal { background: white; border-radius: 16px; padding: 28px; width: 520px; max-width: 90vw;
+           max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+  .modal h2 { font-size: 20px; margin-bottom: 20px; }
+  .modal .field { margin-bottom: 14px; }
+  .modal label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; font-weight: 500; }
+  .modal input, .modal textarea, .modal select { width: 100%; padding: 10px; border: 1px solid #ddd;
+          border-radius: 8px; font-size: 14px; }
   .modal textarea { resize: vertical; min-height: 60px; }
-  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  .modal .checkbox-group { display: flex; gap: 16px; flex-wrap: wrap; }
+  .modal .checkbox-group label { display: flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer; }
+  .modal .checkbox-group input[type=checkbox] { width: 18px; height: 18px; }
+  .modal small { color: #999; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -125,7 +136,7 @@
     <a href="/creator/{{ creator.sec_user_id }}" class="{{ 'active' if not current_status else '' }}">全部</a>
     {% for s, n in status_counts.items() %}
     <a href="/creator/{{ creator.sec_user_id }}?status={{ s }}" class="{{ 'active' if s == current_status else '' }}">
-      {{ s }} ({{ n }})
+      {{ s | status_zh }} ({{ n }})
     </a>
     {% endfor %}
   </div>
@@ -138,7 +149,7 @@
       <div class="video-main">
         <div class="video-title">
           <a href="/video/{{ r.aweme_id }}">{{ r.title }}</a>
-          <span class="status status-{{ r.status }}">{{ r.status }}</span>
+          <span class="status status-{{ r.status }}">{{ r.status | status_zh }}</span>
         </div>
         {% if r.summary %}
         <div class="video-summary">{{ r.summary[:150] }}…</div>
@@ -184,25 +195,19 @@
 <!-- 跑流程 Modal -->
 <div id="runModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
   <div class="modal">
-    <h2>跑流程</h2>
+    <h2>🚀 跑流程</h2>
     <div class="field">
       <label>执行阶段</label>
-      <div style="display:flex;gap:12px;flex-wrap:wrap">
-        <label style="display:flex;align-items:center;gap:4px;font-weight:normal">
-          <input type="checkbox" id="stageCrawl" checked> 抓取视频
-        </label>
-        <label style="display:flex;align-items:center;gap:4px;font-weight:normal">
-          <input type="checkbox" id="stageTranscribe" checked> ASR 转写
-        </label>
-        <label style="display:flex;align-items:center;gap:4px;font-weight:normal">
-          <input type="checkbox" id="stageSummarize" checked> LLM 摘要
-        </label>
+      <div class="checkbox-group">
+        <label><input type="checkbox" id="stageCrawl" checked> 📥 抓取视频</label>
+        <label><input type="checkbox" id="stageTranscribe" checked> 🎙 ASR 转写</label>
+        <label><input type="checkbox" id="stageSummarize" checked> ✍️ LLM 摘要</label>
       </div>
     </div>
     <div class="field">
       <label>抓取数量（0=全部视频）</label>
       <input id="runMaxVideos" type="number" value="0" min="0" placeholder="0 表示全部">
-      <small style="color:#999">首次建议填 5-10 先跑通流程</small>
+      <small>首次建议填 5-10 先跑通流程</small>
     </div>
     <div class="field">
       <label>登录方式</label>
@@ -228,7 +233,7 @@
       <div class="field" style="flex:1">
         <label>摘要上限（0=默认10）</label>
         <input id="runSummarizeLimit" type="number" value="0" min="0">
-        <small style="color:#999">LLM 按 batch 跑，防止一次烧太多钱</small>
+        <small>防止一次烧太多钱</small>
       </div>
     </div>
     <div class="modal-actions">
@@ -263,7 +268,6 @@ async function submitRun(e) {
     summarize_limit: parseInt(document.getElementById('runSummarizeLimit').value) || 0,
     asr_provider: document.getElementById('runAsrProvider').value,
   };
-  // 不关闭弹窗，先显示"启动中"
   const btn = e ? e.target : document.querySelector('#runModal .btn-primary');
   btn.textContent = '启动中...';
   btn.disabled = true;
@@ -276,10 +280,9 @@ async function submitRun(e) {
       closeModal('runModal');
       btn.textContent = '开始';
       btn.disabled = false;
-      // 立即显示 banner，不等 pollTask
       const banner = document.getElementById('taskBanner');
-      banner.className = 'task-banner show';
-      banner.innerHTML = '<span class="spinner"></span> 任务启动中...';
+      banner.className = 'task-banner show running';
+      banner.innerHTML = '<div class="task-header"><span class="spinner"></span> 任务启动中...</div>';
       pollTask();
     } else {
       const d = await r.json();
@@ -287,22 +290,11 @@ async function submitRun(e) {
       btn.textContent = '开始';
       btn.disabled = false;
     }
-  } catch(e) {
-    alert('网络错误: ' + e);
+  } catch(err) {
+    alert('网络错误: ' + err);
     btn.textContent = '开始';
     btn.disabled = false;
   }
-}
-
-async function runCreator(loginType) {
-  // 兼容旧调用
-  const body = { sec_user_id: SEC, login_type: loginType, stages: 'crawl,transcribe,summarize' };
-  const r = await fetch(`/api/creator/${SEC}/run`, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify(body)
-  });
-  if (r.ok) { pollTask(); }
-  else { const d = await r.json(); alert(d.detail || '启动失败'); }
 }
 
 async function refreshInfo() {
@@ -339,22 +331,23 @@ function fmtElapsed(s) {
 
 function pollTask() {
   const banner = document.getElementById('taskBanner');
+  if (!banner) return;
   fetch('/api/task-status').then(r => r.json()).then(d => {
     if (d.running) {
-      banner.className = 'task-banner show';
+      banner.className = 'task-banner show running';
       const p = d.progress || {};
-      const tail = (d.log_tail || []).slice(-2).join(' | ');
+      const tail = (d.log_tail || []).slice(-3).join('\n');
       banner.innerHTML = `
-        <div><span class="spinner"></span> <b>${d.type}</b> 运行中 · ${fmtElapsed(d.elapsed)}</div>
-        <div style="margin-top:4px;color:#999;font-size:12px">${tail}</div>
+        <div class="task-header"><span class="spinner"></span> ${d.type} · 运行中 · ${fmtElapsed(d.elapsed)}</div>
         <div class="task-progress">
-          <span class="item">已完成 <b>${p.done||0}</b></span>
-          <span class="item">转写中 <b>${p.transcribing||0}</b></span>
-          <span class="item">摘要中 <b>${p.summarizing||0}</b></span>
-          <span class="item">待转写 <b>${p.downloaded||0}</b></span>
-          <span class="item">待摘要 <b>${p.transcribed||0}</b></span>
-          <span class="item">失败 <b>${p.failed||0}</b></span>
+          <span class="item"><b>${p.done||0}</b>已完成</span>
+          <span class="item"><b>${p.transcribing||0}</b>转写中</span>
+          <span class="item"><b>${p.summarizing||0}</b>摘要中</span>
+          <span class="item"><b>${p.downloaded||0}</b>待转写</span>
+          <span class="item"><b>${p.transcribed||0}</b>待摘要</span>
+          <span class="item"><b>${p.failed||0}</b>失败</span>
         </div>
+        <div class="task-log">${tail}</div>
         <button class="task-stop-btn" onclick="stopTask()">⏹ 停止任务</button>
       `;
       setTimeout(pollTask, 3000);
@@ -362,8 +355,17 @@ function pollTask() {
       const isStopped = d.message.includes('stopped');
       const isDone = d.message.startsWith('exit=0');
       banner.className = 'task-banner show ' + (isStopped ? 'stopped' : 'done');
-      banner.innerHTML = `${isStopped ? '⏹' : (isDone ? '✅' : '❌')} <b>${d.type}</b> ${d.message} · 用时 ${fmtElapsed(d.elapsed)}
-        <button class="btn btn-sm btn-secondary" style="margin-left:8px" onclick="location.reload()">刷新页面</button>`;
+      const p = d.progress || {};
+      banner.innerHTML = `
+        <div class="task-header">${isStopped ? '⏹' : (isDone ? '✅' : '❌')} ${d.type} · ${d.message} · ${fmtElapsed(d.elapsed)}</div>
+        <div class="task-progress">
+          <span class="item"><b>${p.done||0}</b>已完成</span>
+          <span class="item"><b>${p.downloaded||0}</b>待转写</span>
+          <span class="item"><b>${p.transcribed||0}</b>待摘要</span>
+          <span class="item"><b>${p.failed||0}</b>失败</span>
+        </div>
+        <button class="btn btn-sm btn-secondary" style="margin-top:10px" onclick="location.reload()">刷新页面</button>
+      `;
     } else {
       banner.className = 'task-banner';
     }

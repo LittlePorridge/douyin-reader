@@ -99,7 +99,7 @@
   {% endfor %}
 </div>
 {% else %}
-<p class="empty">尚未生成摘要（status={{ row.status }}）</p>
+<p class="empty">尚未生成摘要（{{ row.status | status_zh }}）</p>
 {% endif %}
 
 {% if key_points %}
