@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
 import sys
+import os
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config
