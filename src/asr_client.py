@@ -142,19 +142,31 @@ class MiMoASRProvider:
         if not self.api_key:
             raise RuntimeError("MIMO_API_KEY not set")
 
-        # 大文件自动压缩为 mp3 减小体积
+        # 大文件用 PyAV 转低码率 mp3
         actual_path = audio_path
         file_size = audio_path.stat().st_size
-        if file_size > 20 * 1024 * 1024:
-            import subprocess, tempfile
-            tmp = Path(tempfile.mktemp(suffix=".mp3"))
-            subprocess.run([
-                "ffmpeg", "-y", "-i", str(audio_path),
-                "-vn", "-acodec", "libmp3lame", "-b:a", "32k", "-ar", "16000", "-ac", "1",
-                str(tmp),
-            ], capture_output=True, timeout=300)
-            actual_path = tmp
-            print(f"[MiMo] compressed {file_size/1024/1024:.1f}MB -> {tmp.stat().st_size/1024/1024:.1f}MB")
+        if file_size > 25 * 1024 * 1024:
+            try:
+                import av
+                import tempfile
+                tmp = Path(tempfile.mktemp(suffix=".mp3"))
+                container = av.open(str(audio_path))
+                audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+                if audio_stream:
+                    resampler = av.AudioResampler(format='s16p', layout='mono', rate=16000)
+                    with av.open(str(tmp), 'w', format='mp3') as out:
+                        out_stream = out.add_stream('mp3', rate=16000)
+                        for frame in container.decode(audio_stream):
+                            for resampled in resampler.resample(frame):
+                                for packet in out_stream.encode(resampled):
+                                    out.mux(packet)
+                        for packet in out_stream.encode(None):
+                            out.mux(packet)
+                    container.close()
+                    actual_path = tmp
+                    print(f"[MiMo] compressed {file_size/1024/1024:.1f}MB -> {tmp.stat().st_size/1024/1024:.1f}MB")
+            except Exception as e:
+                print(f"[MiMo] PyAV compress failed: {e}, sending original")
 
         import base64
         with open(actual_path, "rb") as f:

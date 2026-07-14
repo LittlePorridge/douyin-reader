@@ -248,6 +248,7 @@ def summarize_one(cfg: Config, aweme_id: str, provider: LLMProvider) -> bool:
     ]
 
     print(f"[summarize] {aweme_id} calling {provider.name}/{provider.model} (transcript {len(transcript)} chars)")
+    print(f"[summarize] ▶ NOW 正在处理: {aweme_id} ({title[:30]})")
     t0 = time.time()
     try:
         raw = provider.chat(messages)

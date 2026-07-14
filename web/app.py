@@ -226,10 +226,12 @@ def _run_background_task(task_type: str, cmd: list[str], cwd: str = None) -> Non
     )
     def _worker():
         try:
+            env = os.environ.copy()
+            env["PYTHONUNBUFFERED"] = "1"  # 实时输出日志
             process = subprocess.Popen(
                 cmd, cwd=cwd or str(cfg.project_root),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
+                text=True, bufsize=1, env=env,
             )
             _task_status["pid"] = process.pid
             _task_status["process"] = process

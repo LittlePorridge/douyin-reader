@@ -86,6 +86,7 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
             return
 
     print(f"[transcribe] {aweme_id} start")
+    print(f"[transcribe] ▶ NOW 正在处理: {aweme_id}")
     try:
         # 抽音频：优先 ffmpeg，失败则让 ASR 直接读 mp4
         audio_for_asr = audio_path
@@ -148,26 +149,55 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
 
 
 def _try_extract_audio(video_path: Path, audio_out: Path) -> bool:
-    """有 ffmpeg 则抽音频；无则返回 False 让 whisper 直接吃 mp4"""
+    """抽音频：优先 ffmpeg，失败用 PyAV"""
     import shutil
     import subprocess
-    ffmpeg = shutil.which("ffmpeg")
-    if ffmpeg is None:
-        return False
-    audio_out.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        result = subprocess.run(
-            [ffmpeg, "-y", "-i", str(video_path),
-             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
-             str(audio_out)],
-            capture_output=True, timeout=600,
-        )
-        if result.returncode != 0 or not audio_out.exists():
-            return False
+
+    # 如果已经是 wav，直接返回
+    if video_path.suffix.lower() in (".wav", ".mp3", ".m4a", ".flac"):
         return True
+
+    audio_out.parent.mkdir(parents=True, exist_ok=True)
+
+    # 方案1: ffmpeg
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            result = subprocess.run(
+                [ffmpeg, "-y", "-i", str(video_path),
+                 "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+                 str(audio_out)],
+                capture_output=True, timeout=600,
+            )
+            if result.returncode == 0 and audio_out.exists() and audio_out.stat().st_size > 1000:
+                return True
+        except Exception:
+            pass
+
+    # 方案2: PyAV 抽音频（无需 ffmpeg）
+    try:
+        import av
+        container = av.open(str(video_path))
+        audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+        if audio_stream is None:
+            return False
+        resampler = av.AudioResampler(format='s16', layout='mono', rate=16000)
+        with av.open(str(audio_out), 'w', format='wav') as out:
+            out_stream = out.add_stream('pcm_s16le', rate=16000)
+            out_stream.layout = 'mono'
+            for frame in container.decode(audio_stream):
+                for resampled in resampler.resample(frame):
+                    for packet in out_stream.encode(resampled):
+                        out.mux(packet)
+            for packet in out_stream.encode(None):
+                out.mux(packet)
+        container.close()
+        if audio_out.exists() and audio_out.stat().st_size > 1000:
+            return True
     except Exception as e:
-        print(f"[transcribe] ffmpeg failed: {e}")
-        return False
+        print(f"[transcribe] PyAV extract failed: {e}")
+
+    return False
 
 
 def _fmt_ts(seconds: float) -> str:
