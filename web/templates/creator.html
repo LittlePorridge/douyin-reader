@@ -216,7 +216,8 @@
       <select id="runAsrProvider">
         <option value="">使用配置文件默认</option>
         <option value="local_whisper">本地 Whisper（免费，慢）</option>
-        <option value="groq_whisper">Groq Whisper（免费，极快，需 GROQ_API_KEY）</option>
+        <option value="groq_whisper">Groq Whisper（免费，极快）</option>
+        <option value="mimo_asr">MiMo ASR（¥0.5/h，需 MIMO_API_KEY）</option>
       </select>
     </div>
     <div style="display:flex;gap:16px">
@@ -232,7 +233,7 @@
     </div>
     <div class="modal-actions">
       <button class="btn btn-secondary" onclick="closeModal('runModal')">取消</button>
-      <button class="btn btn-primary" onclick="submitRun()">开始</button>
+      <button class="btn btn-primary" onclick="submitRun(event)">开始</button>
     </div>
   </div>
 </div>
@@ -245,7 +246,8 @@ function closeModal(id) { document.getElementById(id).classList.remove('show'); 
 function openEdit() { openModal('editModal'); }
 function openRunModal() { openModal('runModal'); }
 
-async function submitRun() {
+async function submitRun(e) {
+  e && e.preventDefault();
   const stages = [];
   if (document.getElementById('stageCrawl').checked) stages.push('crawl');
   if (document.getElementById('stageTranscribe').checked) stages.push('transcribe');
@@ -262,7 +264,7 @@ async function submitRun() {
     asr_provider: document.getElementById('runAsrProvider').value,
   };
   // 不关闭弹窗，先显示"启动中"
-  const btn = event.target;
+  const btn = e ? e.target : document.querySelector('#runModal .btn-primary');
   btn.textContent = '启动中...';
   btn.disabled = true;
   try {
@@ -324,7 +326,7 @@ async function submitEdit() {
 async function stopTask() {
   if (!confirm('确定停止当前任务？已处理的数据会保留')) return;
   const r = await fetch('/api/task-stop', {method:'POST'});
-  if (r.ok) { setTimeout(() => location.reload(), 2000); }
+  if (r.ok) { pollTask(); }
 }
 
 function fmtElapsed(s) {
@@ -360,8 +362,8 @@ function pollTask() {
       const isStopped = d.message.includes('stopped');
       const isDone = d.message.startsWith('exit=0');
       banner.className = 'task-banner show ' + (isStopped ? 'stopped' : 'done');
-      banner.innerHTML = `${isStopped ? '⏹' : (isDone ? '✅' : '❌')} <b>${d.type}</b> ${d.message} · 用时 ${fmtElapsed(d.elapsed)}`;
-      setTimeout(() => location.reload(), 4000);
+      banner.innerHTML = `${isStopped ? '⏹' : (isDone ? '✅' : '❌')} <b>${d.type}</b> ${d.message} · 用时 ${fmtElapsed(d.elapsed)}
+        <button class="btn btn-sm btn-secondary" style="margin-left:8px" onclick="location.reload()">刷新页面</button>`;
     } else {
       banner.className = 'task-banner';
     }

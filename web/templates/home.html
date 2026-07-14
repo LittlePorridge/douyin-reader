@@ -204,7 +204,7 @@ async function reauth() {
 async function stopTask() {
   if (!confirm('确定停止当前任务？已处理的数据会保留')) return;
   const r = await fetch('/api/task-stop', {method:'POST'});
-  if (r.ok) { setTimeout(() => location.reload(), 2000); }
+  if (r.ok) { pollTask(); }
 }
 
 function fmtElapsed(s) {
@@ -243,7 +243,8 @@ function pollTask() {
       banner.className = 'task-banner show ' + (isStopped ? 'stopped' : 'done');
       const p = d.progress || {};
       banner.innerHTML = `
-        <div>${isStopped ? '⏹' : (isDone ? '✅' : '❌')} <b>${d.type}</b> ${d.message} · 用时 ${fmtElapsed(d.elapsed)}</div>
+        <div>${isStopped ? '⏹' : (isDone ? '✅' : '❌')} <b>${d.type}</b> ${d.message} · 用时 ${fmtElapsed(d.elapsed)}
+        <button class="btn btn-sm btn-secondary" style="margin-left:8px" onclick="location.reload()">刷新页面</button></div>
         <div class="task-progress">
           <span class="item">已完成 <b>${p.done||0}</b></span>
           <span class="item">待转写 <b>${p.downloaded||0}</b></span>
@@ -251,7 +252,6 @@ function pollTask() {
           <span class="item">失败 <b>${p.failed||0}</b></span>
         </div>
       `;
-      setTimeout(() => { location.reload(); }, 5000);
     } else {
       banner.className = 'task-banner';
     }

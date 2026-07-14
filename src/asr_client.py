@@ -125,8 +125,86 @@ class DashscopeProvider:
     def transcribe(self, audio_path: Path) -> tuple[str, float]:
         raise NotImplementedError(
             "DashScope Paraformer 需要文件 URL，暂未实现。"
-            "请用 Groq Whisper（免费）或本地 whisper。"
+            "请用 Groq Whisper（免费）或 MiMo ASR（¥0.5/小时）。"
         )
+
+
+@dataclass
+class MiMoASRProvider:
+    """小米 MiMo-V2.5-ASR — 走 /v1/chat/completions，base64 传音频，¥0.5/小时"""
+    name: str = "mimo_asr"
+    api_key: str = ""
+    model: str = "mimo-v2.5-asr"
+    api_base: str = "https://api.xiaomimimo.com/v1"
+    language: str = "zh"
+
+    def transcribe(self, audio_path: Path) -> tuple[str, float]:
+        if not self.api_key:
+            raise RuntimeError("MIMO_API_KEY not set")
+
+        # 大文件自动压缩为 mp3 减小体积
+        actual_path = audio_path
+        file_size = audio_path.stat().st_size
+        if file_size > 20 * 1024 * 1024:
+            import subprocess, tempfile
+            tmp = Path(tempfile.mktemp(suffix=".mp3"))
+            subprocess.run([
+                "ffmpeg", "-y", "-i", str(audio_path),
+                "-vn", "-acodec", "libmp3lame", "-b:a", "32k", "-ar", "16000", "-ac", "1",
+                str(tmp),
+            ], capture_output=True, timeout=300)
+            actual_path = tmp
+            print(f"[MiMo] compressed {file_size/1024/1024:.1f}MB -> {tmp.stat().st_size/1024/1024:.1f}MB")
+
+        import base64
+        with open(actual_path, "rb") as f:
+            audio_bytes = f.read()
+
+        # 判断 MIME type
+        suffix = audio_path.suffix.lower()
+        mime_map = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+                    ".mp4": "audio/mp4", ".ogg": "audio/ogg", ".flac": "audio/flac"}
+        mime = mime_map.get(suffix, "audio/wav")
+        b64 = base64.b64encode(audio_bytes).decode("ascii")
+
+        body = {
+            "model": self.model,
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "input_audio",
+                    "input_audio": {
+                        "data": f"data:{mime};base64,{b64}"
+                    }
+                }]
+            }],
+            "asr_options": {"language": self.language},
+        }
+
+        url = f"{self.api_base}/chat/completions"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "User-Agent": "douyin-reader/0.1",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            err = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"MiMo HTTP {e.code}: {err}") from None
+
+        text = payload["choices"][0]["message"]["content"]
+        # MiMo 返回纯文本（不带时间戳），加个占位时间戳
+        duration = payload.get("usage", {}).get("seconds", 60.0)
+        lines = [f"[00:00:00.000 --> 00:{duration:06.1f}] {text[:-1] if text.endswith('.') else text}"]
+        return "\n".join(lines), duration
 
 
 def _fmt_ts(seconds: float) -> str:
@@ -169,6 +247,16 @@ def load_asr_provider_from_dict(cfg: dict) -> ASRProvider:
         p = providers.get("dashscope_paraformer", {})
         api_key = p.get("api_key") or os.environ.get(p.get("api_key_env", "DASHSCOPE_API_KEY"), "")
         return DashscopeProvider(api_key=api_key, model=p.get("model", "paraformer-v2"))
+
+    if active == "mimo_asr":
+        p = providers.get("mimo_asr", {})
+        api_key = p.get("api_key") or os.environ.get(p.get("api_key_env", "MIMO_API_KEY"), "")
+        return MiMoASRProvider(
+            api_key=api_key,
+            model=p.get("model", "mimo-v2.5-asr"),
+            api_base=p.get("api_base", "https://api.xiaomimimo.com/v1"),
+            language=p.get("language", "zh"),
+        )
 
     raise KeyError(f"unknown ASR provider: {active}")
 

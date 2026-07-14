@@ -11,8 +11,15 @@ providers:
     api_key_env: GROQ_API_KEY
     model: whisper-large-v3
     # Groq 免费，注册拿 key: https://console.groq.com
-    # whisper-large-v3 极快：1小时音频约3分钟处理完
-    # 限制：单文件 25MB（大文件自动转 mp3 压缩）
+    # 极快：1小时音频约3分钟处理完，限制：单文件 25MB
+
+  mimo_asr:
+    api_base: https://api.xiaomimimo.com/v1
+    api_key_env: MIMO_API_KEY
+    model: mimo-v2.5-asr
+    language: zh
+    # 小米 MiMo 语音识别，¥0.5/小时
+    # 注册拿 key: https://platform.xiaomimimo.com
 
   dashscope_paraformer:
     api_base: https://dashscope.aliyuncs.com/api/v1
@@ -21,5 +28,6 @@ providers:
     # 阿里云 DashScope，需要文件 URL，暂未实现
 
 # 切换 ASR provider：改 active_provider 即可
-# local_whisper: 免费，本地跑，慢（1分钟视频约1分钟处理）
-# groq_whisper: 免费额度，云端跑，极快（1小时音频约3分钟处理）
+# local_whisper: 免费，本地跑，慢（1分钟视频≈1分钟处理），质量最高
+# groq_whisper: 免费额度，云端，极快（1小时≈3分钟）
+# mimo_asr: ¥0.5/小时，云端，快，中文优化
