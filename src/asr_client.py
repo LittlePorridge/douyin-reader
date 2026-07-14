@@ -142,10 +142,10 @@ class MiMoASRProvider:
         if not self.api_key:
             raise RuntimeError("MIMO_API_KEY not set")
 
-        # 大文件用 PyAV 转低码率 mp3
+        # 大文件用 PyAV 转低码率 mp3（MiMo 限制 base64 10MB）
         actual_path = audio_path
         file_size = audio_path.stat().st_size
-        if file_size > 25 * 1024 * 1024:
+        if file_size > 8 * 1024 * 1024:
             try:
                 import av
                 import tempfile
@@ -156,6 +156,7 @@ class MiMoASRProvider:
                     resampler = av.AudioResampler(format='s16p', layout='mono', rate=16000)
                     with av.open(str(tmp), 'w', format='mp3') as out:
                         out_stream = out.add_stream('mp3', rate=16000)
+                        out_stream.bit_rate = 32000
                         for frame in container.decode(audio_stream):
                             for resampled in resampler.resample(frame):
                                 for packet in out_stream.encode(resampled):
@@ -163,8 +164,9 @@ class MiMoASRProvider:
                         for packet in out_stream.encode(None):
                             out.mux(packet)
                     container.close()
-                    actual_path = tmp
-                    print(f"[MiMo] compressed {file_size/1024/1024:.1f}MB -> {tmp.stat().st_size/1024/1024:.1f}MB")
+                    if tmp.exists() and tmp.stat().st_size > 1000:
+                        actual_path = tmp
+                        print(f"[MiMo] compressed {file_size/1024/1024:.1f}MB -> {tmp.stat().st_size/1024/1024:.1f}MB")
             except Exception as e:
                 print(f"[MiMo] PyAV compress failed: {e}, sending original")
 
@@ -206,7 +208,7 @@ class MiMoASRProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=300) as resp:
+            with urllib.request.urlopen(req, timeout=600) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")
