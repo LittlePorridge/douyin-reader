@@ -415,6 +415,185 @@ def health():
     return {"status": "ok"}
 
 
+# ============ 单条视频操作 ============
+
+class VideoActionRequest(BaseModel):
+    asr_provider: str = ""
+    llm_provider: str = ""
+
+
+@app.post("/api/video/{aweme_id}/transcribe")
+def api_transcribe_one(aweme_id: str, req: VideoActionRequest):
+    """单条视频重新转写"""
+    if _task_status["running"]:
+        raise HTTPException(409, "有任务正在运行，请先停止")
+    cmd = [sys.executable, "-m", "src.orchestrator", "transcribe-one",
+           "--aweme-id", aweme_id]
+    if req.asr_provider:
+        cmd.extend(["--asr-provider", req.asr_provider])
+    _run_background_task(f"转写:{aweme_id[:12]}", cmd)
+    return {"ok": True, "message": "转写任务已启动"}
+
+
+@app.post("/api/video/{aweme_id}/summarize")
+def api_summarize_one(aweme_id: str, req: VideoActionRequest):
+    """单条视频重新摘要"""
+    if _task_status["running"]:
+        raise HTTPException(409, "有任务正在运行，请先停止")
+    cmd = [sys.executable, "-m", "src.orchestrator", "summarize-one",
+           "--aweme-id", aweme_id]
+    if req.llm_provider:
+        cmd.extend(["--llm-provider", req.llm_provider])
+    _run_background_task(f"摘要:{aweme_id[:12]}", cmd)
+    return {"ok": True, "message": "摘要任务已启动"}
+
+
+@app.post("/api/video/{aweme_id}/reset")
+def api_reset_video(aweme_id: str, req: dict):
+    """重置视频状态"""
+    status = req.get("status", "downloaded")
+    with _connect() as conn:
+        n = conn.execute(
+            "UPDATE videos SET status=?, status_message=NULL, retry_count=0 WHERE aweme_id=?",
+            (status, aweme_id),
+        ).rowcount
+    if n == 0:
+        raise HTTPException(404, "video not found")
+    return {"ok": True, "message": f"状态已重置为 {status}"}
+
+
+@app.delete("/api/video/{aweme_id}")
+def api_delete_video(aweme_id: str):
+    """删除视频（仅从 DB 删除，不删文件）"""
+    with _connect() as conn:
+        n = conn.execute("DELETE FROM videos WHERE aweme_id=?", (aweme_id,)).rowcount
+        conn.execute("DELETE FROM llm_summaries WHERE aweme_id=?", (aweme_id,))
+    if n == 0:
+        raise HTTPException(404, "video not found")
+    return {"ok": True, "message": "视频已删除"}
+
+
+# ============ 批量操作 ============
+
+class BatchActionRequest(BaseModel):
+    aweme_ids: list[str]
+    action: str  # transcribe | summarize | reset | delete
+    asr_provider: str = ""
+    status: str = "downloaded"
+
+
+@app.post("/api/video/batch")
+def api_batch_action(req: BatchActionRequest):
+    """批量操作视频"""
+    if _task_status["running"]:
+        raise HTTPException(409, "有任务正在运行，请先停止")
+    if not req.aweme_ids:
+        raise HTTPException(400, "未选择视频")
+    if req.action == "transcribe":
+        cmd = [sys.executable, "-m", "src.orchestrator", "transcribe-batch",
+               "--aweme-ids", ",".join(req.aweme_ids)]
+        if req.asr_provider:
+            cmd.extend(["--asr-provider", req.asr_provider])
+        _run_background_task(f"批量转写:{len(req.aweme_ids)}条", cmd)
+    elif req.action == "summarize":
+        cmd = [sys.executable, "-m", "src.orchestrator", "summarize-batch",
+               "--aweme-ids", ",".join(req.aweme_ids)]
+        _run_background_task(f"批量摘要:{len(req.aweme_ids)}条", cmd)
+    elif req.action == "reset":
+        with _connect() as conn:
+            for aid in req.aweme_ids:
+                conn.execute(
+                    "UPDATE videos SET status=?, status_message=NULL, retry_count=0 WHERE aweme_id=?",
+                    (req.status, aid),
+                )
+        return {"ok": True, "message": f"已重置 {len(req.aweme_ids)} 条"}
+    elif req.action == "delete":
+        with _connect() as conn:
+            for aid in req.aweme_ids:
+                conn.execute("DELETE FROM videos WHERE aweme_id=?", (aid,))
+                conn.execute("DELETE FROM llm_summaries WHERE aweme_id=?", (aid,))
+        return {"ok": True, "message": f"已删除 {len(req.aweme_ids)} 条"}
+    else:
+        raise HTTPException(400, f"未知操作: {req.action}")
+    return {"ok": True, "message": f"任务已启动: {req.action} {len(req.aweme_ids)} 条"}
+
+
+# ============ 磁盘监控 ============
+
+@app.get("/api/disk-usage")
+def api_disk_usage():
+    """磁盘占用"""
+    import shutil as _shutil
+    total, used, free = _shutil.disk_usage(str(cfg.project_root))
+
+    def _dir_size(path: Path) -> int:
+        if not path.exists():
+            return 0
+        total_size = 0
+        for f in path.rglob("*"):
+            if f.is_file():
+                try:
+                    total_size += f.stat().st_size
+                except OSError:
+                    pass
+        return total_size
+
+    mp4_size = _dir_size(cfg.videos_dir)
+    wav_size = _dir_size(cfg.audio_dir)
+    text_size = _dir_size(cfg.text_dir)
+    summary_size = _dir_size(cfg.summary_dir)
+    db_size = cfg.db_path.stat().st_size if cfg.db_path.exists() else 0
+
+    return {
+        "disk": {
+            "total_gb": round(total / 1024**3, 1),
+            "used_gb": round(used / 1024**3, 1),
+            "free_gb": round(free / 1024**3, 1),
+        },
+        "project": {
+            "mp4_mb": round(mp4_size / 1024**2, 1),
+            "wav_mb": round(wav_size / 1024**2, 1),
+            "text_mb": round(text_size / 1024**2, 2),
+            "summary_mb": round(summary_size / 1024**2, 2),
+            "db_mb": round(db_size / 1024**2, 2),
+            "total_mb": round((mp4_size + wav_size + text_size + summary_size + db_size) / 1024**2, 1),
+        },
+    }
+
+
+@app.post("/api/cleanup")
+def api_cleanup(req: dict):
+    """清理临时文件"""
+    what = req.get("what", "wav")
+    deleted = {"wav": 0, "mp4": 0, "bytes": 0}
+    import os as _os
+
+    if what in ("wav", "all"):
+        for f in cfg.audio_dir.glob("*.wav"):
+            sz = f.stat().st_size
+            f.unlink()
+            deleted["wav"] += 1
+            deleted["bytes"] += sz
+
+    if what in ("mp4", "all"):
+        # 只删已完成的视频的 mp4
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT aweme_id FROM videos WHERE status='done'"
+            ).fetchall()
+        for row in rows:
+            vdir = cfg.videos_dir / row["aweme_id"]
+            if vdir.exists():
+                for f in vdir.rglob("*"):
+                    if f.is_file():
+                        deleted["bytes"] += f.stat().st_size
+                        deleted["mp4"] += 1
+                _os.rmtree(str(vdir), ignore_errors=True)
+
+    deleted["mb"] = round(deleted["bytes"] / 1024**2, 1)
+    return {"ok": True, "deleted": deleted}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)

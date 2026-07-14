@@ -53,6 +53,18 @@
   .empty { text-align: center; padding: 60px 20px; color: #999; }
   .empty code { background: #eee; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
 
+  /* 磁盘监控 */
+  .disk-panel { background: white; border-radius: 12px; padding: 20px; margin-bottom: 20px;
+                border: 1px solid #eee; }
+  .disk-panel h3 { font-size: 15px; margin-bottom: 12px; }
+  .disk-bar { height: 24px; background: #eee; border-radius: 12px; overflow: hidden; margin-bottom: 8px; position: relative; }
+  .disk-bar-fill { height: 100%; border-radius: 12px; transition: width .3s; }
+  .disk-bar-text { position: absolute; top: 0; left: 0; right: 0; text-align: center; line-height: 24px; font-size: 12px; font-weight: 600; color: #333; }
+  .disk-items { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; }
+  .disk-items .item { color: #666; }
+  .disk-items .item b { color: #333; }
+  .disk-actions { margin-top: 10px; display: flex; gap: 8px; }
+
   /* Modal - 更醒目 */
   .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
                    background: rgba(0,0,0,.5); z-index: 200; justify-content: center; align-items: center; }
@@ -100,6 +112,8 @@
 </div>
 <div class="container">
   <div id="taskBanner" class="task-banner"></div>
+
+  <div id="diskPanel" class="disk-panel"></div>
 {% if creators %}
 <div class="grid">
   {% for c in creators %}
@@ -220,6 +234,49 @@ function fmtElapsed(s) {
   return h + '时' + (m%60) + '分';
 }
 
+function loadDiskUsage() {
+  fetch('/api/disk-usage').then(r => r.json()).then(d => {
+    const disk = d.disk, proj = d.project;
+    const usedPct = (disk.used_gb / disk.total_gb * 100).toFixed(0);
+    const freeColor = disk.free_gb < 5 ? '#d73a49' : disk.free_gb < 20 ? '#f0a020' : '#28a745';
+    const fillPct = usedPct;
+    const panel = document.getElementById('diskPanel');
+    panel.innerHTML = `
+      <h3>💾 磁盘占用</h3>
+      <div class="disk-bar">
+        <div class="disk-bar-fill" style="width:${fillPct}%;background:${freeColor === '#d73a49' ? '#d73a49' : '#0366d6'}"></div>
+        <div class="disk-bar-text">${disk.used_gb}GB / ${disk.total_gb}GB · 剩余 ${disk.free_gb}GB</div>
+      </div>
+      <div class="disk-items">
+        <span class="item">🎬 mp4 <b>${proj.mp4_mb}MB</b></span>
+        <span class="item">🎵 wav <b>${proj.wav_mb}MB</b></span>
+        <span class="item">📝 文字 <b>${proj.text_mb}MB</b></span>
+        <span class="item">📄 摘要 <b>${proj.summary_mb}MB</b></span>
+        <span class="item">🗃️ 数据库 <b>${proj.db_mb}MB</b></span>
+        <span class="item">总占用 <b>${proj.total_mb}MB</b></span>
+      </div>
+      <div class="disk-actions">
+        <button class="btn btn-secondary btn-sm" onclick="cleanup('wav')">清理 wav</button>
+        <button class="btn btn-secondary btn-sm" onclick="cleanup('mp4')">清理已完成视频的 mp4</button>
+      </div>
+    `;
+  });
+}
+
+async function cleanup(what) {
+  const label = what === 'wav' ? '所有 wav 音频文件（转写中间产物）' : '已完成视频的 mp4 文件';
+  if (!confirm(`确定清理${label}？此操作不可撤销。`)) return;
+  const r = await fetch('/api/cleanup', {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({what: what})
+  });
+  if (r.ok) {
+    const d = await r.json();
+    const del = d.deleted;
+    alert(`已清理 ${del.wav + del.mp4} 个文件，释放 ${del.mb}MB`);
+    loadDiskUsage();
+  } else { alert('清理失败'); }
+}
+
 function pollTask() {
   const banner = document.getElementById('taskBanner');
   if (!banner) return;
@@ -263,7 +320,7 @@ function pollTask() {
     }
   });
 }
-window.addEventListener('load', () => { pollTask(); });
+window.addEventListener('load', () => { pollTask(); loadDiskUsage(); });
 </script>
 </body>
 </html>

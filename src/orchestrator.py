@@ -352,6 +352,145 @@ def cmd_reset(cfg: Config, args: argparse.Namespace) -> None:
     print(f"reset {n} row(s)")
 
 
+def cmd_transcribe_one(cfg: Config, args: argparse.Namespace) -> None:
+    """单条视频转写"""
+    init_db(cfg)
+    from .transcribe_worker import transcribe_one
+    # 先重置为 downloaded
+    with connect(cfg) as conn:
+        conn.execute(
+            "UPDATE videos SET status='downloaded', status_message=NULL, retry_count=0 WHERE aweme_id=?",
+            (args.aweme_id,),
+        )
+    if args.asr_provider:
+        os.environ["ASR_PROVIDER_OVERRIDE"] = args.asr_provider
+    transcribe_one(cfg, args.aweme_id)
+    print(f"transcribe done: {args.aweme_id}")
+
+
+def cmd_summarize_one(cfg: Config, args: argparse.Namespace) -> None:
+    """单条视频摘要"""
+    init_db(cfg)
+    if args.llm_provider:
+        # 临时切换 active provider
+        import yaml
+        with cfg.llm_providers_path.open("r") as f:
+            ycfg = yaml.safe_load(f)
+        ycfg["active_provider"] = args.llm_provider
+        with cfg.llm_providers_path.open("w") as f:
+            yaml.safe_dump(ycfg, f, allow_unicode=True)
+    from .summarize_worker import summarize_one
+    from .llm_client import load_provider_from_yaml
+    provider = load_provider_from_yaml(cfg.llm_providers_path)
+    # 重置为 transcribed
+    with connect(cfg) as conn:
+        conn.execute(
+            "UPDATE videos SET status='transcribed', status_message=NULL WHERE aweme_id=?",
+            (args.aweme_id,),
+        )
+    summarize_one(cfg, args.aweme_id, provider)
+    print(f"summarize done: {args.aweme_id}")
+
+
+def cmd_transcribe_batch(cfg: Config, args: argparse.Namespace) -> None:
+    """批量转写指定视频"""
+    init_db(cfg)
+    from .transcribe_worker import transcribe_one
+    if args.asr_provider:
+        os.environ["ASR_PROVIDER_OVERRIDE"] = args.asr_provider
+    ids = args.aweme_ids.split(",")
+    for i, aid in enumerate(ids):
+        aid = aid.strip()
+        if not aid:
+            continue
+        print(f"=== [{i+1}/{len(ids)}] {aid} ===")
+        with connect(cfg) as conn:
+            conn.execute(
+                "UPDATE videos SET status='downloaded', status_message=NULL, retry_count=0 WHERE aweme_id=?",
+                (aid,),
+            )
+        transcribe_one(cfg, aid)
+    print(f"batch transcribe done: {len(ids)} videos")
+
+
+def cmd_summarize_batch(cfg: Config, args: argparse.Namespace) -> None:
+    """批量摘要指定视频"""
+    init_db(cfg)
+    from .summarize_worker import summarize_one
+    from .llm_client import load_provider_from_yaml
+    provider = load_provider_from_yaml(cfg.llm_providers_path)
+    ids = args.aweme_ids.split(",")
+    for i, aid in enumerate(ids):
+        aid = aid.strip()
+        if not aid:
+            continue
+        print(f"=== [{i+1}/{len(ids)}] {aid} ===")
+        with connect(cfg) as conn:
+            conn.execute(
+                "UPDATE videos SET status='transcribed', status_message=NULL WHERE aweme_id=?",
+                (aid,),
+            )
+        summarize_one(cfg, aid, provider)
+    print(f"batch summarize done: {len(ids)} videos")
+
+
+def cmd_cleanup(cfg: Config, args: argparse.Namespace) -> None:
+    """清理临时文件"""
+    import shutil as _shutil
+    deleted_wav = 0
+    deleted_mp4 = 0
+    total_bytes = 0
+
+    if args.remove_wav or args.all:
+        for f in cfg.audio_dir.glob("*.wav"):
+            sz = f.stat().st_size
+            f.unlink()
+            deleted_wav += 1
+            total_bytes += sz
+        print(f"deleted {deleted_wav} wav files")
+
+    if args.remove_mp4 or args.all:
+        with connect(cfg) as conn:
+            if args.done_only:
+                rows = conn.execute(
+                    "SELECT aweme_id FROM videos WHERE status='done'"
+                ).fetchall()
+            else:
+                rows = conn.execute("SELECT aweme_id FROM videos").fetchall()
+        for row in rows:
+            vdir = cfg.videos_dir / row["aweme_id"]
+            if vdir.exists():
+                for f in vdir.rglob("*"):
+                    if f.is_file():
+                        total_bytes += f.stat().st_size
+                        deleted_mp4 += 1
+                _shutil.rmtree(str(vdir), ignore_errors=True)
+        print(f"deleted {deleted_mp4} mp4 files")
+
+    if args.stats:
+        total, used, free = _shutil.disk_usage(str(cfg.project_root))
+        print(f"磁盘: 总 {total/1024**3:.1f}GB / 已用 {used/1024**3:.1f}GB / 剩余 {free/1024**3:.1f}GB")
+        # 项目占用
+        def _dir_size(path):
+            if not path.exists():
+                return 0
+            s = 0
+            for f in path.rglob("*"):
+                if f.is_file():
+                    try:
+                        s += f.stat().st_size
+                    except OSError:
+                        pass
+            return s
+        print(f"mp4: {_dir_size(cfg.videos_dir)/1024**2:.1f}MB")
+        print(f"wav: {_dir_size(cfg.audio_dir)/1024**2:.1f}MB")
+        print(f"text: {_dir_size(cfg.text_dir)/1024**2:.2f}MB")
+        print(f"summaries: {_dir_size(cfg.summary_dir)/1024**2:.2f}MB")
+
+    mb = total_bytes / 1024**2
+    print(f"共清理 {mb:.1f}MB")
+
+
 def cmd_status(cfg: Config, args: argparse.Namespace) -> None:
     """查看处理状态概览"""
     init_db(cfg)
@@ -459,6 +598,33 @@ def main() -> None:
     p_reset.add_argument("--aweme-id", required=True)
     p_reset.add_argument("--status", required=True)
     p_reset.set_defaults(func=lambda a: cmd_reset(cfg, a))
+
+    p_tr1 = sub.add_parser("transcribe-one", help="单条视频转写")
+    p_tr1.add_argument("--aweme-id", required=True)
+    p_tr1.add_argument("--asr-provider", default="")
+    p_tr1.set_defaults(func=lambda a: cmd_transcribe_one(cfg, a))
+
+    p_sm1 = sub.add_parser("summarize-one", help="单条视频摘要")
+    p_sm1.add_argument("--aweme-id", required=True)
+    p_sm1.add_argument("--llm-provider", default="")
+    p_sm1.set_defaults(func=lambda a: cmd_summarize_one(cfg, a))
+
+    p_trb = sub.add_parser("transcribe-batch", help="批量转写指定视频")
+    p_trb.add_argument("--aweme-ids", required=True, help="逗号分隔的 aweme_id")
+    p_trb.add_argument("--asr-provider", default="")
+    p_trb.set_defaults(func=lambda a: cmd_transcribe_batch(cfg, a))
+
+    p_smb = sub.add_parser("summarize-batch", help="批量摘要指定视频")
+    p_smb.add_argument("--aweme-ids", required=True, help="逗号分隔的 aweme_id")
+    p_smb.set_defaults(func=lambda a: cmd_summarize_batch(cfg, a))
+
+    p_clean = sub.add_parser("cleanup", help="清理临时文件")
+    p_clean.add_argument("--remove-wav", action="store_true")
+    p_clean.add_argument("--remove-mp4", action="store_true")
+    p_clean.add_argument("--all", action="store_true")
+    p_clean.add_argument("--done-only", action="store_true", help="只删已完成视频的 mp4")
+    p_clean.add_argument("--stats", action="store_true", help="查看磁盘占用")
+    p_clean.set_defaults(func=lambda a: cmd_cleanup(cfg, a))
 
     args = parser.parse_args()
     args.func(args)
