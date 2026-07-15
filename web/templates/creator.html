@@ -147,6 +147,12 @@
     <span style="font-size:13px;color:#666">全选</span>
     <span id="selectedCount" style="font-size:13px;color:#0366d6;margin-left:8px"></span>
     <div style="flex:1"></div>
+    <select id="batchAsrProvider" style="padding:4px 8px;font-size:13px;border-radius:6px;border:1px solid #ddd" title="ASR 引擎">
+      <option value="">默认 ASR</option>
+      <option value="local_whisper">本地 Whisper</option>
+      <option value="groq_whisper">Groq Whisper</option>
+      <option value="mimo_asr">MiMo ASR</option>
+    </select>
     <select id="batchAction" style="padding:4px 8px;font-size:13px;border-radius:6px;border:1px solid #ddd">
       <option value="">批量操作...</option>
       <option value="transcribe">批量转写</option>
@@ -342,8 +348,9 @@ function toggleAll(cb) {
 
 async function singleAction(awemeId, action) {
   const actionZh = action === 'transcribe' ? '转写' : '摘要';
+  const asrProvider = document.getElementById('batchAsrProvider')?.value || '';
   if (!confirm(`确定对这条视频执行${actionZh}？`)) return;
-  const body = { asr_provider: document.getElementById('runAsrProvider')?.value || '' };
+  const body = { asr_provider: asrProvider };
   const r = await fetch(`/api/video/${awemeId}/${action}`, {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
   });
@@ -384,7 +391,7 @@ async function execBatch() {
   } else {
     if (!confirm(`确定对 ${ids.length} 条视频执行${action === 'transcribe' ? '转写' : '摘要'}？`)) return;
     const body = {aweme_ids: ids, action: action};
-    if (action === 'transcribe') body.asr_provider = document.getElementById('runAsrProvider')?.value || '';
+    if (action === 'transcribe') body.asr_provider = document.getElementById('batchAsrProvider')?.value || '';
     const r = await fetch('/api/video/batch', {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body)
     });
