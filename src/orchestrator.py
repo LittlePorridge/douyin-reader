@@ -418,6 +418,13 @@ def cmd_summarize_batch(cfg: Config, args: argparse.Namespace) -> None:
     init_db(cfg)
     from .summarize_worker import summarize_one
     from .llm_client import load_provider_from_yaml
+    if args.llm_provider:
+        import yaml
+        with cfg.llm_providers_path.open("r") as f:
+            ycfg = yaml.safe_load(f)
+        ycfg["active_provider"] = args.llm_provider
+        with cfg.llm_providers_path.open("w") as f:
+            yaml.safe_dump(ycfg, f, allow_unicode=True)
     provider = load_provider_from_yaml(cfg.llm_providers_path)
     ids = args.aweme_ids.split(",")
     for i, aid in enumerate(ids):
@@ -616,6 +623,7 @@ def main() -> None:
 
     p_smb = sub.add_parser("summarize-batch", help="批量摘要指定视频")
     p_smb.add_argument("--aweme-ids", required=True, help="逗号分隔的 aweme_id")
+    p_smb.add_argument("--llm-provider", default="")
     p_smb.set_defaults(func=lambda a: cmd_summarize_batch(cfg, a))
 
     p_clean = sub.add_parser("cleanup", help="清理临时文件")

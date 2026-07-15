@@ -479,6 +479,7 @@ class BatchActionRequest(BaseModel):
     aweme_ids: list[str]
     action: str  # transcribe | summarize | reset | delete
     asr_provider: str = ""
+    llm_provider: str = ""
     status: str = "downloaded"
 
 
@@ -498,6 +499,8 @@ def api_batch_action(req: BatchActionRequest):
     elif req.action == "summarize":
         cmd = [sys.executable, "-m", "src.orchestrator", "summarize-batch",
                "--aweme-ids", ",".join(req.aweme_ids)]
+        if req.llm_provider:
+            cmd.extend(["--llm-provider", req.llm_provider])
         _run_background_task(f"批量摘要:{len(req.aweme_ids)}条", cmd)
     elif req.action == "reset":
         with _connect() as conn:
