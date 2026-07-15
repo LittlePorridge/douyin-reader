@@ -30,11 +30,8 @@ env = Environment(
 
 app = FastAPI(title="douyin-reader")
 
-# 后台任务状态
-_task_status: dict = {
-    "running": False, "type": "", "message": "", "started_at": 0, "log": [],
-    "pid": 0, "process": None,
-}
+# 后台任务列表（支持多任务并行）
+_tasks: list[dict] = []
 
 
 def _connect() -> sqlite3.Connection:
@@ -237,35 +234,36 @@ class RunRequest(BaseModel):
 
 
 def _run_background_task(task_type: str, cmd: list[str], cwd: str = None) -> None:
-    """在后台线程里跑 subprocess"""
-    if _task_status["running"]:
-        return
-    _task_status.update(
-        running=True, type=task_type, message="running",
-        started_at=time.time(), log=[], pid=0, process=None,
-    )
+    """在后台线程里跑 subprocess，支持多任务并行"""
+    task = {
+        "type": task_type, "message": "running",
+        "started_at": time.time(), "log": [],
+        "pid": 0, "process": None, "done": False,
+    }
+    _tasks.append(task)
+
     def _worker():
         try:
             env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"  # 实时输出日志
+            env["PYTHONUNBUFFERED"] = "1"
             process = subprocess.Popen(
                 cmd, cwd=cwd or str(cfg.project_root),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, bufsize=1, env=env,
             )
-            _task_status["pid"] = process.pid
-            _task_status["process"] = process
+            task["pid"] = process.pid
+            task["process"] = process
             for line in process.stdout:
-                _task_status["log"].append(line.rstrip())
-                if len(_task_status["log"]) > 500:
-                    _task_status["log"] = _task_status["log"][-300:]
+                task["log"].append(line.rstrip())
+                if len(task["log"]) > 300:
+                    task["log"] = task["log"][-200:]
             process.wait()
-            _task_status["message"] = f"exit={process.returncode}"
+            task["message"] = f"exit={process.returncode}"
         except Exception as e:
-            _task_status["message"] = f"error: {e}"
+            task["message"] = f"error: {e}"
         finally:
-            _task_status["running"] = False
-            _task_status["process"] = None
+            task["done"] = True
+            task["process"] = None
     threading.Thread(target=_worker, daemon=True).start()
 
 
@@ -303,8 +301,6 @@ def api_refresh_info(sec_user_id: str):
 
 @app.post("/api/creator/{sec_user_id}/run")
 def api_run_creator(sec_user_id: str, req: RunRequest):
-    if _task_status["running"]:
-        raise HTTPException(409, f"task already running: {_task_status['type']}")
     cmd = [sys.executable, "-m", "src.orchestrator", "run",
            "--sec-user-id", sec_user_id, "--login-type", req.login_type,
            "--stages", req.stages, "--batch", str(req.batch)]
@@ -323,8 +319,6 @@ def api_run_creator(sec_user_id: str, req: RunRequest):
 
 @app.post("/api/run-all")
 def api_run_all():
-    if _task_status["running"]:
-        raise HTTPException(409, f"task already running: {_task_status['type']}")
     cmd = [sys.executable, "-m", "src.orchestrator", "run-all"]
     _run_background_task("run-all", cmd)
     return {"ok": True, "message": "task started"}
@@ -343,8 +337,8 @@ def api_status():
         "transcribed": counts.get("transcribed", 0),
         "failed": counts.get("transcribe_failed", 0) + counts.get("summarize_failed", 0),
         "done": counts.get("done", 0),
-        "task_running": _task_status["running"],
-        "task_type": _task_status["type"],
+        "task_running": any(not t["done"] for t in _tasks),
+        "task_type": ", ".join(t["type"] for t in _tasks if not t["done"]),
         "status_detail": {k: {"count": v, "label": STATUS_ZH.get(k, k)} for k, v in counts.items()},
     }
 
@@ -362,9 +356,28 @@ def api_reauth():
 @app.post("/api/task-stop")
 def api_task_stop():
     """停止当前后台任务"""
-    if not _task_status["running"]:
+    # 停止所有运行中的任务
+    stopped = 0
+    for t in _tasks:
+        if not t["done"]:
+            process = t.get("process")
+            if process:
+                try:
+                    import subprocess as sp
+                    sp.run(["pkill", "-P", str(process.pid)], capture_output=True)
+                    process.terminate()
+                    process.wait(timeout=5)
+                except Exception:
+                    try: process.kill()
+                    except: pass
+            t["done"] = True
+            t["message"] = "stopped by user"
+            stopped += 1
+    if stopped == 0:
         return {"ok": True, "message": "no task running"}
-    process = _task_status.get("process")
+    return {"ok": True, "message": f"stopped {stopped} task(s)"}
+
+# 旧代码不会执行到这里
     if process:
         # 杀进程树（含子进程）
         import signal
@@ -379,9 +392,7 @@ def api_task_stop():
                 process.kill()
             except Exception:
                 pass
-    _task_status["running"] = False
-    _task_status["message"] = "stopped by user"
-    return {"ok": True, "message": "task stopped"}
+    return {"ok": True, "message": f"stopped {stopped} task(s)"}
 
 
 @app.get("/api/task-status")
@@ -392,12 +403,25 @@ def api_task_status():
             "SELECT status, count(*) as n FROM videos GROUP BY status"
         ).fetchall()
     counts = {r["status"]: r["n"] for r in rows}
+    running_tasks = [t for t in _tasks if not t["done"]]
+    # 清理已完成超过5分钟的任务
+    import time as _t
+    _tasks[:] = [t for t in _tasks if not t["done"] or (_t.time() - t["started_at"] - 300 < 0)]
+
+    # 合并所有运行中任务的日志
+    all_logs = []
+    for t in running_tasks:
+        all_logs.append(f"[{t['type']}] {t['log'][-3:][-1]}" if t['log'] else "")
+
+    # 优先显示运行中的任务，否则显示最近完成的
+    active = running_tasks[0] if running_tasks else (_tasks[-1] if _tasks else None)
     return {
-        "running": _task_status["running"],
-        "type": _task_status["type"],
-        "message": _task_status["message"],
-        "elapsed": time.time() - _task_status["started_at"] if _task_status["started_at"] else 0,
-        "log_tail": _task_status["log"][-30:],
+        "running": len(running_tasks) > 0,
+        "type": active["type"] if active else "",
+        "message": active["message"] if active else "",
+        "elapsed": time.time() - active["started_at"] if active else 0,
+        "log_tail": (active["log"][-20:] if active else []),
+        "tasks_running": [{"type": t["type"], "message": t["message"]} for t in running_tasks],
         "progress": {
             "downloaded": counts.get("downloaded", 0) + counts.get("new", 0),
             "transcribed": counts.get("transcribed", 0),
@@ -425,8 +449,6 @@ class VideoActionRequest(BaseModel):
 @app.post("/api/video/{aweme_id}/transcribe")
 def api_transcribe_one(aweme_id: str, req: VideoActionRequest):
     """单条视频重新转写"""
-    if _task_status["running"]:
-        raise HTTPException(409, "有任务正在运行，请先停止")
     cmd = [sys.executable, "-m", "src.orchestrator", "transcribe-one",
            "--aweme-id", aweme_id]
     if req.asr_provider:
@@ -438,8 +460,6 @@ def api_transcribe_one(aweme_id: str, req: VideoActionRequest):
 @app.post("/api/video/{aweme_id}/summarize")
 def api_summarize_one(aweme_id: str, req: VideoActionRequest):
     """单条视频重新摘要"""
-    if _task_status["running"]:
-        raise HTTPException(409, "有任务正在运行，请先停止")
     cmd = [sys.executable, "-m", "src.orchestrator", "summarize-one",
            "--aweme-id", aweme_id]
     if req.llm_provider:
@@ -486,8 +506,6 @@ class BatchActionRequest(BaseModel):
 @app.post("/api/video/batch")
 def api_batch_action(req: BatchActionRequest):
     """批量操作视频"""
-    if _task_status["running"]:
-        raise HTTPException(409, "有任务正在运行，请先停止")
     if not req.aweme_ids:
         raise HTTPException(400, "未选择视频")
     if req.action == "transcribe":
