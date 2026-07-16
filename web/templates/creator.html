@@ -133,13 +133,19 @@
   </div>
 
   <div class="filters">
-    <a href="/creator/{{ creator.sec_user_id }}" class="{{ 'active' if not current_status else '' }}">全部</a>
+    <a href="/creator/{{ creator.sec_user_id }}" class="{{ 'active' if not current_status and not current_q else '' }}">全部</a>
     {% for s, n in status_counts.items() %}
     <a href="/creator/{{ creator.sec_user_id }}?status={{ s }}" class="{{ 'active' if s == current_status else '' }}">
       {{ s | status_zh }} ({{ n }})
     </a>
     {% endfor %}
   </div>
+
+  <form method="get" action="/creator/{{ creator.sec_user_id }}" style="margin-bottom:16px;display:flex;gap:8px">
+    <input type="text" name="q" value="{{ current_q }}" placeholder="🔍 搜索标题 / 摘要 / 描述..." style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px">
+    <button type="submit" class="btn btn-primary btn-sm">搜索</button>
+    {% if current_q %}<a href="/creator/{{ creator.sec_user_id }}" class="btn btn-secondary btn-sm">清除</a>{% endif %}
+  </form>
 
   {% if rows %}
   <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">

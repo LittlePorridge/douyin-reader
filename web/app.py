@@ -108,7 +108,7 @@ def home(request: Request):
 
 
 @app.get("/creator/{sec_user_id}", response_class=HTMLResponse)
-def creator_view(sec_user_id: str, request: Request, status: str | None = None):
+def creator_view(sec_user_id: str, request: Request, status: str | None = None, q: str | None = None):
     """博主详情页：该博主的视频列表"""
     with _connect() as conn:
         creator = conn.execute(
@@ -125,6 +125,9 @@ def creator_view(sec_user_id: str, request: Request, status: str | None = None):
         if status:
             sql += " AND status=?"
             params.append(status)
+        if q:
+            sql += " AND (title LIKE ? OR summary LIKE ? OR desc_text LIKE ?)"
+            params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
         sql += " ORDER BY create_time DESC"
         rows = conn.execute(sql, params).fetchall()
 
@@ -137,7 +140,7 @@ def creator_view(sec_user_id: str, request: Request, status: str | None = None):
     tmpl = env.get_template("creator.html")
     return tmpl.render(
         request=request, creator=creator, rows=rows,
-        status_counts=status_counts, current_status=status,
+        status_counts=status_counts, current_status=status, current_q=q or "",
     )
 
 
