@@ -52,7 +52,7 @@ cp docs/asr_config.yaml.example data/asr_config.yaml
 
 ```bash
 python3 -c "from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
-sqlite3 data/douyin-reader.db < data/seed.sql
+sqlite3 data/douyin-reader.db < seed/seed.sql
 ```
 
 ### 4. 启动 Web
@@ -138,7 +138,7 @@ douyin-reader/
 ├── CLAUDE.md                # 项目规范
 ├── USAGE.md                 # 使用手册
 ├── CHANGELOG.md             # 问题记录与修复日志
-├── data/seed.sql            # 种子数据（博主+视频+摘要）
+├── seed/seed.sql            # 种子数据（博主+视频+摘要）
 ├── docs/                    # 架构文档、配置模板
 ├── scripts/                 # 部署脚本、补丁、数据导出
 ├── src/                     # 后端代码
@@ -153,7 +153,7 @@ douyin-reader/
 
 ## 📝 给朋友的使用说明
 
-1. **只想浏览内容**（不需要自己抓取）：导入 `data/seed.sql`，启动 Web 即可
+1. **只想浏览内容**（不需要自己抓取）：导入 `seed/seed.sql`，启动 Web 即可
 2. **想自己抓取新博主**：需要额外安装 MediaCrawler + Playwright + 抖音登录态
 3. **想用不同 LLM 跑摘要**：在 `data/llm_providers.yaml` 注册 provider，填 `.env` 里的 key
 

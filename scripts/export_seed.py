@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 DB = Path(__file__).resolve().parent.parent / "data" / "douyin-reader.db"
-OUT = Path(__file__).resolve().parent.parent / "data" / "seed.sql"
+OUT = Path(__file__).resolve().parent.parent / "seed" / "seed.sql"
 
 
 def main():
