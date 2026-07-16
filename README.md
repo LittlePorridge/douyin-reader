@@ -2,7 +2,43 @@
 
 自动抓取抖音博主视频 → AI 语音转写 → LLM 生成摘要/要点/知识点 → 本地 Web 浏览。
 
-## ✨ 功能
+---
+
+## 👀 只想浏览内容？（3 分钟上手）
+
+如果你只想看已生成的好内容，不需要自己抓取视频，按以下步骤操作：
+
+### 第 1 步：安装 Python 依赖
+
+```bash
+git clone https://github.com/LittlePorridge/douyin-reader.git
+cd douyin-reader
+pip install fastapi uvicorn jinja2 pyyaml
+```
+
+### 第 2 步：初始化数据库 & 导入数据
+
+```bash
+# 创建数据库表
+python3 -c "import sys; sys.path.insert(0,'.'); from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
+
+# 导入预置数据（6 个博主、278 条视频、143 条摘要）
+sqlite3 data/douyin-reader.db < seed/seed.sql
+```
+
+### 第 3 步：启动 Web
+
+```bash
+python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
+```
+
+浏览器打开 http://127.0.0.1:8000 ，即可浏览博主卡片 → 视频列表 → 视频详情（摘要、正文、要点、知识点、完整文字稿）。
+
+> 不需要 MediaCrawler、不需要 API Key、不需要下载视频，纯浏览模式。
+
+---
+
+## ✨ 完整功能
 
 - **博主管理**：添加博主、分类、备注，自动抓取头像和简介
 - **视频抓取**：全量/部分抓取博主视频，支持增量去重
@@ -13,18 +49,22 @@
 - **任务管理**：多任务并行、实时进度、一键停止
 - **磁盘监控**：查看 mp4/wav/文字占用，一键清理
 
-## 🚀 快速开始
+## 🚀 完整部署（抓取 + 转写 + 摘要）
 
-### 1. 克隆 & 安装
+### 1. 安装 MediaCrawler
 
 ```bash
-git clone https://github.com/LittlePorridge/douyin-reader.git
-cd douyin-reader
+# 下载 MediaCrawler
+curl -sL -o /tmp/mc.zip "https://codeload.github.com/NanmiCoder/MediaCrawler/zip/refs/heads/main"
+unzip -q -o /tmp/mc.zip -d /tmp/
+mv /tmp/MediaCrawler-main MediaCrawler
+rm /tmp/mc.zip
 
-# 下载 MediaCrawler 并打补丁
+# 安装依赖
+cd MediaCrawler && uv sync && uv run playwright install chromium && cd ..
+
+# 打补丁（支持限制抓取数量 + 博主信息获取）
 python3 scripts/patch_mediacrawler.py
-# 或完整安装（含 MediaCrawler 下载 + 依赖 + 补丁）
-bash scripts/setup.sh
 ```
 
 ### 2. 配置 API Key
@@ -46,12 +86,10 @@ cp docs/llm_providers.yaml.example data/llm_providers.yaml
 cp docs/asr_config.yaml.example data/asr_config.yaml
 ```
 
-### 3. 导入种子数据（可选）
-
-仓库包含预置的博主和视频摘要数据，可直接导入体验：
+### 3. 导入种子数据（可选，同上）
 
 ```bash
-python3 -c "from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
+python3 -c "import sys; sys.path.insert(0,'.'); from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
 sqlite3 data/douyin-reader.db < seed/seed.sql
 ```
 
@@ -60,8 +98,6 @@ sqlite3 data/douyin-reader.db < seed/seed.sql
 ```bash
 python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 ```
-
-浏览器打开 http://127.0.0.1:8000
 
 ### 5. 添加博主并跑流程
 
@@ -135,7 +171,7 @@ new → downloaded → transcribing → transcribed → summarizing → done
 
 ```
 douyin-reader/
-├── CLAUDE.md                # 项目规范
+├── README.md                # 本文件
 ├── USAGE.md                 # 使用手册
 ├── CHANGELOG.md             # 问题记录与修复日志
 ├── seed/seed.sql            # 种子数据（博主+视频+摘要）
@@ -150,12 +186,6 @@ douyin-reader/
 │   └── ...
 └── web/                     # FastAPI Web 服务
 ```
-
-## 📝 给朋友的使用说明
-
-1. **只想浏览内容**（不需要自己抓取）：导入 `seed/seed.sql`，启动 Web 即可
-2. **想自己抓取新博主**：需要额外安装 MediaCrawler + Playwright + 抖音登录态
-3. **想用不同 LLM 跑摘要**：在 `data/llm_providers.yaml` 注册 provider，填 `.env` 里的 key
 
 ## ⚠️ 免责声明
 
