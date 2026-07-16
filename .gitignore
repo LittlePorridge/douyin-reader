@@ -14,6 +14,7 @@ data/llm_providers.yaml
 # Data (本地数据，不入 git)
 data/
 !data/.gitkeep
+!data/seed.sql
 
 # MediaCrawler 自身数据（如开启 git init 后）
 MediaCrawler/browser_data/
