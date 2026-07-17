@@ -587,35 +587,19 @@ def api_disk_usage():
 
 @app.post("/api/cleanup")
 def api_cleanup(req: dict):
-    """清理临时文件"""
+    """清理临时文件（异步任务，有进度反馈）"""
     what = req.get("what", "wav")
-    deleted = {"wav": 0, "mp4": 0, "bytes": 0}
-    import os as _os
+    label = "wav 音频" if what == "wav" else "已完成视频的 mp4" if what == "mp4" else "wav+mp4"
 
+    cmd = [sys.executable, "-m", "src.orchestrator", "cleanup",
+           "--stats"]
     if what in ("wav", "all"):
-        for f in cfg.audio_dir.glob("*.wav"):
-            sz = f.stat().st_size
-            f.unlink()
-            deleted["wav"] += 1
-            deleted["bytes"] += sz
-
+        cmd.append("--remove-wav")
     if what in ("mp4", "all"):
-        # 只删已完成的视频的 mp4
-        with _connect() as conn:
-            rows = conn.execute(
-                "SELECT aweme_id FROM videos WHERE status='done'"
-            ).fetchall()
-        for row in rows:
-            vdir = cfg.videos_dir / row["aweme_id"]
-            if vdir.exists():
-                for f in vdir.rglob("*"):
-                    if f.is_file():
-                        deleted["bytes"] += f.stat().st_size
-                        deleted["mp4"] += 1
-                _os.rmtree(str(vdir), ignore_errors=True)
-
-    deleted["mb"] = round(deleted["bytes"] / 1024**2, 1)
-    return {"ok": True, "deleted": deleted}
+        cmd.append("--remove-mp4")
+        cmd.append("--done-only")
+    _run_background_task(f"清理{label}", cmd)
+    return {"ok": True, "message": f"正在清理{label}，请查看进度"}
 
 
 if __name__ == "__main__":

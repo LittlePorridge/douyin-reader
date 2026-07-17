@@ -449,12 +449,15 @@ def cmd_cleanup(cfg: Config, args: argparse.Namespace) -> None:
     total_bytes = 0
 
     if args.remove_wav or args.all:
-        for f in cfg.audio_dir.glob("*.wav"):
+        wavs = list(cfg.audio_dir.glob("*.wav"))
+        total_wav = len(wavs)
+        for i, f in enumerate(wavs, 1):
             sz = f.stat().st_size
             f.unlink()
             deleted_wav += 1
             total_bytes += sz
-        print(f"deleted {deleted_wav} wav files")
+            print(f"[cleanup] wav {i}/{total_wav} deleted ({sz/1024/1024:.1f}MB)")
+        print(f"[cleanup] deleted {deleted_wav} wav files")
 
     if args.remove_mp4 or args.all:
         with connect(cfg) as conn:
@@ -462,22 +465,28 @@ def cmd_cleanup(cfg: Config, args: argparse.Namespace) -> None:
                 rows = conn.execute(
                     "SELECT aweme_id FROM videos WHERE status='done'"
                 ).fetchall()
+                print(f"[cleanup] found {len(rows)} done videos to clean")
             else:
                 rows = conn.execute("SELECT aweme_id FROM videos").fetchall()
-        for row in rows:
+        total_mp4 = len(rows)
+        for i, row in enumerate(rows, 1):
             vdir = cfg.videos_dir / row["aweme_id"]
             if vdir.exists():
+                dir_bytes = 0
                 for f in vdir.rglob("*"):
                     if f.is_file():
-                        total_bytes += f.stat().st_size
+                        dir_bytes += f.stat().st_size
                         deleted_mp4 += 1
+                total_bytes += dir_bytes
                 _shutil.rmtree(str(vdir), ignore_errors=True)
-        print(f"deleted {deleted_mp4} mp4 files")
+                print(f"[cleanup] mp4 {i}/{total_mp4} {row['aweme_id']} deleted ({dir_bytes/1024/1024:.1f}MB)")
+            else:
+                print(f"[cleanup] mp4 {i}/{total_mp4} {row['aweme_id']} already gone")
+        print(f"[cleanup] deleted {deleted_mp4} mp4 files")
 
     if args.stats:
         total, used, free = _shutil.disk_usage(str(cfg.project_root))
-        print(f"磁盘: 总 {total/1024**3:.1f}GB / 已用 {used/1024**3:.1f}GB / 剩余 {free/1024**3:.1f}GB")
-        # 项目占用
+        print(f"[cleanup] 磁盘: 总 {total/1024**3:.1f}GB / 已用 {used/1024**3:.1f}GB / 剩余 {free/1024**3:.1f}GB")
         def _dir_size(path):
             if not path.exists():
                 return 0
@@ -489,13 +498,14 @@ def cmd_cleanup(cfg: Config, args: argparse.Namespace) -> None:
                     except OSError:
                         pass
             return s
-        print(f"mp4: {_dir_size(cfg.videos_dir)/1024**2:.1f}MB")
-        print(f"wav: {_dir_size(cfg.audio_dir)/1024**2:.1f}MB")
-        print(f"text: {_dir_size(cfg.text_dir)/1024**2:.2f}MB")
-        print(f"summaries: {_dir_size(cfg.summary_dir)/1024**2:.2f}MB")
+        print(f"[cleanup] mp4: {_dir_size(cfg.videos_dir)/1024**2:.1f}MB")
+        print(f"[cleanup] wav: {_dir_size(cfg.audio_dir)/1024**2:.1f}MB")
+        print(f"[cleanup] text: {_dir_size(cfg.text_dir)/1024**2:.2f}MB")
+        print(f"[cleanup] summaries: {_dir_size(cfg.summary_dir)/1024**2:.2f}MB")
 
     mb = total_bytes / 1024**2
-    print(f"共清理 {mb:.1f}MB")
+    print(f"[cleanup] 共清理 {mb:.1f}MB")
+    print(f"[cleanup] ✅ 完成! 删除 wav={deleted_wav} mp4={deleted_mp4} 释放 {mb:.1f}MB")
 
 
 def cmd_status(cfg: Config, args: argparse.Namespace) -> None:
