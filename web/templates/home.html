@@ -256,7 +256,8 @@ async function cleanup(what) {
   const r = await fetch('/api/cleanup', {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({what: what})
   });
-  if (r.ok) { const d = await r.json(); alert(`清理 ${d.deleted.wav + d.deleted.mp4} 个文件，释放 ${d.deleted.mb}MB`); loadDiskUsage(); }
+  if (r.ok) { pollTask(); }
+  else { alert('清理失败'); }
 }
 
 function pollTask() {
