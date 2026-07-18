@@ -9,6 +9,7 @@
          background: #f5f5f5; color: #222; line-height: 1.7; }
   .header { background: white; padding: 16px 32px; border-bottom: 1px solid #e0e0e0; }
   .header a { color: #0366d6; text-decoration: none; font-size: 14px; }
+  .header .breadcrumb { color: #999; }
   .container { max-width: 800px; margin: 0 auto; padding: 24px 16px; }
   .content { background: white; border-radius: 12px; padding: 32px; border: 1px solid #eee; }
   h1 { font-size: 22px; margin-bottom: 8px; line-height: 1.4; }
@@ -31,25 +32,39 @@
         background: #f7f7f7; padding: 16px; border-radius: 8px;
         max-height: 500px; overflow-y: auto; margin-top: 12px; }
   .empty { color: #999; font-style: italic; }
-  .version-bar { background: #f9f9f9; padding: 12px 16px; border-radius: 8px;
-                 margin-bottom: 20px; font-size: 13px; border: 1px solid #eee; }
-  .version-bar .label { color: #666; margin-right: 8px; font-weight: 600; }
-  .version-bar a { margin: 4px 6px 4px 0; text-decoration: none; padding: 4px 10px;
-                   border-radius: 6px; display: inline-block; font-size: 12px; }
-  .version-bar a.active { background: #0366d6; color: white; }
-  .version-bar a:not(.active) { background: white; color: #0366d6; border: 1px solid #ddd; }
-  .version-bar a .star { color: #f0a020; }
+
+  /* LLM tab 切换 */
+  .llm-tabs { display: flex; gap: 6px; margin-bottom: 20px; flex-wrap: wrap; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+  .llm-tabs a { padding: 6px 14px; border-radius: 8px 8px 0 0; font-size: 13px; text-decoration: none;
+                background: #f5f5f5; color: #666; border: 1px solid #ddd; border-bottom: none; }
+  .llm-tabs a.active { background: #0366d6; color: white; border-color: #0366d6; }
+  .llm-tabs a .star { color: #f0a020; }
+
   .duration-bar { display: flex; gap: 20px; padding: 12px 16px; background: #f9f9f9;
                   border-radius: 8px; margin-bottom: 20px; font-size: 13px; border: 1px solid #eee; }
   .duration-bar .item { display: flex; align-items: center; gap: 6px; }
   .duration-bar .item .icon { font-size: 16px; }
   .duration-bar .item .val { font-weight: 600; color: #333; }
+
+  /* 文字稿 Modal */
+  .transcript-modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,.6); z-index: 300; justify-content: center; align-items: center; }
+  .transcript-modal-overlay.show { display: flex; }
+  .transcript-modal { background: white; border-radius: 16px; width: 700px; max-width: 90vw;
+    max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; }
+  .transcript-modal-header { padding: 16px 20px; border-bottom: 1px solid #eee;
+    display: flex; justify-content: space-between; align-items: center; }
+  .transcript-modal-header h3 { margin: 0; font-size: 16px; }
+  .transcript-modal-header button { background: none; border: none; font-size: 20px; cursor: pointer; color: #999; }
+  .transcript-modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+  .transcript-modal-body pre { background: none; padding: 0; max-height: none; margin: 0; }
 </style>
 </head>
 <body>
 <div class="header">
-  <a href="/">← 首页</a>
-  {% if creator %} · <a href="/creator/{{ creator.sec_user_id }}">{{ creator.nickname or '博主' }}</a>{% endif %}
+  <a href="/">首页</a>
+  {% if creator %}<span class="breadcrumb"> / <a href="/creator/{{ creator.sec_user_id }}" style="color:#0366d6">{{ creator.nickname or '博主' }}</a></span>{% endif %}
+  <span class="breadcrumb"> / {{ row.title[:30] }}</span>
 </div>
 <div class="container">
 <div class="content">
@@ -68,14 +83,13 @@
 </div>
 
 {% if all_summaries %}
-<div class="version-bar">
-  <span class="label">LLM 版本</span><br>
+<div class="llm-tabs">
   {% for s in all_summaries %}
     <a href="/video/{{ row.aweme_id }}?provider={{ s.provider }}"
        class="{{ 'active' if s.provider == current_provider else '' }}">
       {{ s.model }}
       {% if s.is_primary %}<span class="star">★</span>{% endif %}
-      {{ s.article_len }}字 · {{ s.summarize_duration | fmt_duration }}
+      {{ s.article_len }}字
     </a>
   {% endfor %}
 </div>
@@ -124,14 +138,30 @@
 
 {% if transcript %}
 <div class="divider"></div>
-<details>
-  <summary><b>完整文字稿</b> ({{ transcript.count('\n') + 1 }} 段)</summary>
-  <pre>{{ transcript }}</pre>
-</details>
+<button class="btn btn-secondary" onclick="openTranscript()" style="margin-top:12px">📄 查看完整文字稿 ({{ transcript.count('\n') + 1 }} 段)</button>
 {% else %}
 <p class="empty">未生成文字稿</p>
 {% endif %}
 </div>
 </div>
+
+<!-- 文字稿 Modal -->
+<div id="transcriptModal" class="transcript-modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
+  <div class="transcript-modal">
+    <div class="transcript-modal-header">
+      <h3>完整文字稿</h3>
+      <button onclick="closeTranscript()">✕</button>
+    </div>
+    <div class="transcript-modal-body">
+      <pre>{{ transcript }}</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+function openTranscript() { document.getElementById('transcriptModal').classList.add('show'); }
+function closeTranscript() { document.getElementById('transcriptModal').classList.remove('show'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTranscript(); });
+</script>
 </body>
 </html>

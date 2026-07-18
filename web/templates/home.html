@@ -45,9 +45,10 @@
   .stat .label { font-size: 11px; color: #999; margin-top: 2px; }
   .stat .num.done { color: #28a745; }
   .stat .num.pending { color: #f0a020; }
-  .progress-bar { height: 4px; background: #eee; border-radius: 2px; overflow: hidden; }
-  .progress-fill { height: 100%; background: #28a745; border-radius: 2px; transition: width .3s; }
-  .card-footer { margin-top: 12px; font-size: 12px; color: #999; }
+  .progress-bar { height: 8px; background: #eee; border-radius: 4px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #28a745; border-radius: 4px; transition: width .3s; }
+  .card-footer { margin-top: 10px; font-size: 12px; color: #999; }
+  .card-recent { margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; font-size: 12px; color: #888; }
   .empty { text-align: center; padding: 60px 20px; color: #999; }
 
   /* 折叠工具区 */
@@ -148,6 +149,9 @@
     <div class="card-footer">
       {% if c.latest_video_time %}最新视频 {{ c.latest_video_time | fmt_create_time }}{% endif %}
     </div>
+    {% if c.recent_video_title %}
+    <div class="card-recent">📖 {{ c.recent_video_title[:20] }}</div>
+    {% endif %}
   </a>
   {% endfor %}
 </div>
