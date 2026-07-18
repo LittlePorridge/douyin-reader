@@ -99,7 +99,8 @@ def home(request: Request):
                       (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id) as video_count,
                       (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id AND v.status='done') as done_count,
                       (SELECT count(*) FROM videos v WHERE v.sec_user_id=c.sec_user_id AND v.status NOT IN ('done')) as pending_count,
-                      (SELECT max(v.create_time) FROM videos v WHERE v.sec_user_id=c.sec_user_id) as latest_video_time
+                      (SELECT max(v.create_time) FROM videos v WHERE v.sec_user_id=c.sec_user_id) as latest_video_time,
+                      (SELECT v.title FROM videos v WHERE v.sec_user_id=c.sec_user_id AND v.status='done' ORDER BY v.create_time DESC LIMIT 1) as recent_video_title
                FROM creators c
                ORDER BY video_count DESC, c.first_seen_at"""
         ).fetchall()
@@ -108,8 +109,10 @@ def home(request: Request):
 
 
 @app.get("/creator/{sec_user_id}", response_class=HTMLResponse)
-def creator_view(sec_user_id: str, request: Request, status: str | None = None, q: str | None = None):
+def creator_view(sec_user_id: str, request: Request, status: str | None = None,
+                 q: str | None = None, page: int = 1, sort: str = "time"):
     """博主详情页：该博主的视频列表"""
+    PAGE_SIZE = 30
     with _connect() as conn:
         creator = conn.execute(
             "SELECT * FROM creators WHERE sec_user_id=?", (sec_user_id,)
@@ -117,18 +120,39 @@ def creator_view(sec_user_id: str, request: Request, status: str | None = None, 
         if creator is None:
             raise HTTPException(404, "creator not found")
 
-        sql = """SELECT aweme_id, title, status, create_time, liked_count,
-                        summary, video_duration, transcribe_duration,
-                        (SELECT summarize_duration FROM llm_summaries s WHERE s.aweme_id=v.aweme_id AND s.is_primary=1) as summarize_duration
-                 FROM videos v WHERE sec_user_id=?"""
+        where_parts = ["sec_user_id=?"]
         params: list = [sec_user_id]
         if status:
-            sql += " AND status=?"
+            where_parts.append("status=?")
             params.append(status)
         if q:
-            sql += " AND (title LIKE ? OR summary LIKE ? OR desc_text LIKE ?)"
+            where_parts.append("(title LIKE ? OR summary LIKE ? OR desc_text LIKE ?)")
             params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
-        sql += " ORDER BY create_time DESC"
+        where = " AND ".join(where_parts)
+
+        # 排序
+        sort_map = {
+            "time": "create_time DESC",
+            "time_asc": "create_time ASC",
+            "likes": "liked_count DESC",
+            "status": "status ASC, create_time DESC",
+        }
+        order = sort_map.get(sort, "create_time DESC")
+
+        # 总数
+        total = conn.execute(
+            f"SELECT count(*) as n FROM videos v WHERE {where}", params
+        ).fetchone()["n"]
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(1, min(page, total_pages))
+        offset = (page - 1) * PAGE_SIZE
+
+        sql = f"""SELECT aweme_id, title, status, create_time, liked_count,
+                        summary, video_duration, transcribe_duration,
+                        (SELECT summarize_duration FROM llm_summaries s WHERE s.aweme_id=v.aweme_id AND s.is_primary=1) as summarize_duration
+                 FROM videos v WHERE {where}
+                 ORDER BY {order}
+                 LIMIT {PAGE_SIZE} OFFSET {offset}"""
         rows = conn.execute(sql, params).fetchall()
 
         status_counts = {}
@@ -141,6 +165,8 @@ def creator_view(sec_user_id: str, request: Request, status: str | None = None, 
     return tmpl.render(
         request=request, creator=creator, rows=rows,
         status_counts=status_counts, current_status=status, current_q=q or "",
+        current_page=page, total_pages=total_pages, total_videos=total,
+        current_sort=sort,
     )
 
 

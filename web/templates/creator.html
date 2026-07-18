@@ -8,6 +8,7 @@
   body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; background: #f5f5f5; color: #222; }
   .header { background: white; padding: 16px 32px; border-bottom: 1px solid #e0e0e0; }
   .header a { color: #0366d6; text-decoration: none; font-size: 14px; }
+  .header .breadcrumb { color: #999; }
   .container { max-width: 1000px; margin: 0 auto; padding: 24px 16px; }
 
   .creator-banner { background: white; border-radius: 12px; padding: 24px; margin-bottom: 20px;
@@ -36,25 +37,32 @@
   .btn-sm { padding: 5px 12px; font-size: 13px; }
   .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .filters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
-  .filters a { padding: 4px 12px; border-radius: 20px; font-size: 13px;
+  /* 工具栏 - 合并成一行 */
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
+  .toolbar .filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .toolbar .filters a { padding: 4px 10px; border-radius: 20px; font-size: 12px;
                text-decoration: none; background: white; color: #666; border: 1px solid #ddd; }
-  .filters a.active { background: #0366d6; color: white; border-color: #0366d6; }
+  .toolbar .filters a.active { background: #0366d6; color: white; border-color: #0366d6; }
+  .toolbar .sep { width: 1px; height: 24px; background: #ddd; }
+  .toolbar input[type=text] { flex: 1; min-width: 150px; padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; }
+  .toolbar select { padding: 5px 8px; font-size: 12px; border-radius: 6px; border: 1px solid #ddd; }
 
-  .video-list { display: flex; flex-direction: column; gap: 12px; }
-  .video-card { background: white; border-radius: 10px; padding: 16px 20px;
+  .video-list { display: flex; flex-direction: column; gap: 10px; }
+  .video-card { background: white; border-radius: 10px; padding: 14px 16px;
                 text-decoration: none; color: inherit; border: 1px solid #eee;
-                transition: box-shadow .2s; display: flex; gap: 16px; align-items: start; }
+                transition: box-shadow .2s; display: flex; gap: 12px; align-items: start; }
   .video-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,.08); }
-  .video-date { font-size: 12px; color: #999; min-width: 80px; padding-top: 2px; }
-  .video-main { flex: 1; }
-  .video-title { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+  .video-date { font-size: 12px; color: #999; min-width: 75px; padding-top: 2px; flex-shrink: 0; }
+  .video-main { flex: 1; min-width: 0; }
+  .video-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; }
   .video-title a { color: #222; text-decoration: none; }
   .video-title a:hover { color: #0366d6; }
-  .video-summary { font-size: 13px; color: #666; line-height: 1.6;
-                   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .video-meta { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: #999; }
-  .video-meta span { display: flex; align-items: center; gap: 4px; }
+  .video-summary { font-size: 12px; color: #666; line-height: 1.5;
+                   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+                   margin-bottom: 4px; }
+  .video-summary.expanded { display: block; }
+  .video-meta { display: flex; gap: 12px; font-size: 11px; color: #999; }
+  .video-meta span { display: flex; align-items: center; gap: 3px; }
   .status { font-size: 11px; padding: 2px 8px; border-radius: 3px; color: white; font-weight: 500; }
   .status-done { background: #28a745; }
   .status-new, .status-downloaded { background: #6c757d; }
@@ -62,9 +70,28 @@
   .status-transcribe_failed, .status-summarize_failed, .status-manual_failed { background: #d73a49; }
   .empty { text-align: center; padding: 40px; color: #999; }
 
-  /* Task banner - 更醒目 */
-  .task-banner { display: none; padding: 16px 20px; border-radius: 10px; margin-bottom: 20px; font-size: 14px;
-                 border: 2px solid; }
+  /* 分页 */
+  .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 20px; align-items: center; }
+  .pagination a, .pagination span { padding: 6px 12px; border-radius: 6px; font-size: 13px; text-decoration: none; }
+  .pagination a { background: white; color: #0366d6; border: 1px solid #ddd; }
+  .pagination a:hover { background: #f5f5f5; }
+  .pagination span.current { background: #0366d6; color: white; }
+  .pagination span.disabled { color: #ccc; }
+
+  /* 下拉菜单 */
+  .dropdown { position: relative; display: inline-block; }
+  .dropdown-menu { display: none; position: absolute; right: 0; top: 100%; z-index: 50;
+                   background: white; border: 1px solid #ddd; border-radius: 8px;
+                   box-shadow: 0 4px 16px rgba(0,0,0,.12); min-width: 120px; padding: 4px 0; }
+  .dropdown-menu.show { display: block; }
+  .dropdown-menu button { display: block; width: 100%; padding: 8px 12px; border: none; background: none;
+                     text-align: left; font-size: 13px; cursor: pointer; }
+  .dropdown-menu button:hover { background: #f5f5f5; }
+  .dropdown-menu .divider { height: 1px; background: #eee; margin: 4px 0; }
+
+  /* Task banner */
+  .task-banner { display: none; padding: 16px 20px; border-radius: 10px; margin-bottom: 20px;
+                 font-size: 14px; border: 2px solid; }
   .task-banner.show { display: block; }
   .task-banner.running { background: #fff8e1; border-color: #f0a020; }
   .task-banner.done { background: #d4edda; border-color: #28a745; }
@@ -83,7 +110,7 @@
                    background: #d73a49; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; }
   .task-stop-btn:hover { background: #c62828; }
 
-  /* Modal - 更醒目 */
+  /* Modal */
   .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
                    background: rgba(0,0,0,.5); z-index: 200; justify-content: center; align-items: center; }
   .modal-overlay.show { display: flex; }
@@ -104,7 +131,8 @@
 </head>
 <body>
 <div class="header">
-  <a href="/">← 首页</a>
+  <a href="/">首页</a>
+  <span class="breadcrumb"> / {{ creator.nickname or '博主' }}</span>
 </div>
 <div class="container">
   <div id="taskBanner" class="task-banner"></div>
@@ -123,7 +151,7 @@
         {% if creator.note %}<span class="badge badge-note">📝 {{ creator.note }}</span>{% endif %}
       </div>
       {% if creator.intro %}<p>{{ creator.intro }}</p>{% endif %}
-      <p style="margin-top:4px">{{ rows | length }} 个视频 · <a href="{{ creator.homepage_url }}" target="_blank">抖音主页 ↗</a></p>
+      <p style="margin-top:4px">{{ total_videos }} 个视频 · <a href="{{ creator.homepage_url }}" target="_blank">抖音主页 ↗</a></p>
     </div>
     <div class="creator-actions">
       <button class="btn btn-primary btn-sm" onclick="openRunModal()">▶️ 跑流程</button>
@@ -132,34 +160,33 @@
     </div>
   </div>
 
-  <div class="filters">
-    <a href="/creator/{{ creator.sec_user_id }}" class="{{ 'active' if not current_status and not current_q else '' }}">全部</a>
-    {% for s, n in status_counts.items() %}
-    <a href="/creator/{{ creator.sec_user_id }}?status={{ s }}" class="{{ 'active' if s == current_status else '' }}">
-      {{ s | status_zh }} ({{ n }})
-    </a>
-    {% endfor %}
-  </div>
-
-  <form method="get" action="/creator/{{ creator.sec_user_id }}" style="margin-bottom:16px;display:flex;gap:8px">
-    <input type="text" name="q" value="{{ current_q }}" placeholder="🔍 搜索标题 / 摘要 / 描述..." style="flex:1;padding:8px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px">
-    <button type="submit" class="btn btn-primary btn-sm">搜索</button>
-    {% if current_q %}<a href="/creator/{{ creator.sec_user_id }}" class="btn btn-secondary btn-sm">清除</a>{% endif %}
-  </form>
-
-  {% if rows %}
-  <div style="margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-    <input type="checkbox" id="selectAll" onchange="toggleAll(this)" style="width:18px;height:18px">
-    <span style="font-size:13px;color:#666">全选</span>
-    <span id="selectedCount" style="font-size:13px;color:#0366d6;margin-left:8px"></span>
-    <div style="flex:1"></div>
-    <select id="batchAsrProvider" style="padding:4px 8px;font-size:13px;border-radius:6px;border:1px solid #ddd" title="ASR 引擎">
+  <!-- 合并工具栏 -->
+  <div class="toolbar">
+    <div class="filters">
+      <a href="/creator/{{ creator.sec_user_id }}" class="{{ 'active' if not current_status and not current_q else '' }}">全部</a>
+      {% for s, n in status_counts.items() %}
+      <a href="/creator/{{ creator.sec_user_id }}?status={{ s }}" class="{{ 'active' if s == current_status else '' }}">
+        {{ s | status_zh }} ({{ n }})
+      </a>
+      {% endfor %}
+    </div>
+    <span class="sep"></span>
+    <input type="text" id="searchQ" placeholder="🔍 搜索..." value="{{ current_q }}"
+           onkeydown="if(event.key==='Enter')searchVideos()">
+    <select id="sortSelect" onchange="sortVideos()">
+      <option value="time" {{ 'selected' if current_sort == 'time' else '' }}>最新优先</option>
+      <option value="time_asc" {{ 'selected' if current_sort == 'time_asc' else '' }}>最早优先</option>
+      <option value="likes" {{ 'selected' if current_sort == 'likes' else '' }}>点赞最多</option>
+      <option value="status" {{ 'selected' if current_sort == 'status' else '' }}>按状态</option>
+    </select>
+    <span class="sep"></span>
+    <select id="batchAsrProvider" title="ASR 引擎">
       <option value="">默认 ASR</option>
       <option value="local_whisper">本地 Whisper</option>
       <option value="groq_whisper">Groq Whisper</option>
       <option value="mimo_asr">MiMo ASR</option>
     </select>
-    <select id="batchLlmProvider" style="padding:4px 8px;font-size:13px;border-radius:6px;border:1px solid #ddd" title="LLM 引擎">
+    <select id="batchLlmProvider" title="LLM 引擎">
       <option value="">默认 LLM</option>
       <option value="deepseek_chat">DeepSeek Chat</option>
       <option value="opencode_go_deepseek_v4_pro">opencode DeepSeek V4 Pro</option>
@@ -168,7 +195,7 @@
       <option value="volc_deepseek_v4_pro">火山 DeepSeek V4 Pro</option>
       <option value="volc_doubao_seed_2_0_pro">火山 豆包2.0 Pro</option>
     </select>
-    <select id="batchAction" style="padding:4px 8px;font-size:13px;border-radius:6px;border:1px solid #ddd">
+    <select id="batchAction">
       <option value="">批量操作...</option>
       <option value="transcribe">批量转写</option>
       <option value="summarize">批量摘要</option>
@@ -177,10 +204,17 @@
     </select>
     <button class="btn btn-secondary btn-sm" onclick="execBatch()">执行</button>
   </div>
+
+  {% if rows %}
+  <div style="margin-bottom:10px;display:flex;gap:8px;align-items:center">
+    <input type="checkbox" id="selectAll" onchange="toggleAll(this)" style="width:16px;height:16px">
+    <span style="font-size:12px;color:#666">全选</span>
+    <span id="selectedCount" style="font-size:12px;color:#0366d6;margin-left:4px"></span>
+  </div>
   <div class="video-list">
     {% for r in rows %}
     <div class="video-card" data-aweme="{{ r.aweme_id }}">
-      <input type="checkbox" class="video-cb" value="{{ r.aweme_id }}" onchange="updateSelectedCount()" style="width:18px;height:18px;margin-right:4px;flex-shrink:0;margin-top:2px">
+      <input type="checkbox" class="video-cb" value="{{ r.aweme_id }}" onchange="updateSelectedCount()" style="width:16px;height:16px;margin-right:2px;flex-shrink:0;margin-top:2px">
       <div class="video-date">{{ r.create_time | fmt_create_time }}</div>
       <div class="video-main">
         <div class="video-title">
@@ -188,7 +222,8 @@
           <span class="status status-{{ r.status }}">{{ r.status | status_zh }}</span>
         </div>
         {% if r.summary %}
-        <div class="video-summary">{{ r.summary[:150] }}…</div>
+        <div class="video-summary" id="summary-{{ r.aweme_id }}">{{ r.summary[:150] }}…</div>
+        <a href="#" onclick="toggleSummary('{{ r.aweme_id }}');return false" style="font-size:11px;color:#0366d6;text-decoration:none">展开</a>
         {% endif %}
         <div class="video-meta">
           <span>👍 {{ r.liked_count }}</span>
@@ -196,18 +231,44 @@
           {% if r.transcribe_duration %}<span>🎙 {{ r.transcribe_duration | fmt_duration }}</span>{% endif %}
           {% if r.summarize_duration %}<span>✍️ {{ r.summarize_duration | fmt_duration }}</span>{% endif %}
         </div>
-        <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap">
-          <button class="btn btn-secondary btn-sm" style="padding:3px 8px;font-size:12px" onclick="singleAction('{{ r.aweme_id }}','transcribe')">🎙 转写</button>
-          <button class="btn btn-secondary btn-sm" style="padding:3px 8px;font-size:12px" onclick="singleAction('{{ r.aweme_id }}','summarize')">✍️ 摘要</button>
-          <button class="btn btn-secondary btn-sm" style="padding:3px 8px;font-size:12px" onclick="resetVideo('{{ r.aweme_id }}')">🔄 重置</button>
-          <a class="btn btn-secondary btn-sm" style="padding:3px 8px;font-size:12px;text-decoration:none" href="/video/{{ r.aweme_id }}">📖 详情</a>
+      </div>
+      <div class="dropdown">
+        <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:12px" onclick="this.nextElementSibling.classList.toggle('show')">⋯</button>
+        <div class="dropdown-menu">
+          <button onclick="singleAction('{{ r.aweme_id }}','transcribe')">🎙 转写</button>
+          <button onclick="singleAction('{{ r.aweme_id }}','summarize')">✍️ 摘要</button>
+          <button onclick="resetVideo('{{ r.aweme_id }}')">🔄 重置状态</button>
+          <div class="divider"></div>
+          <a href="/video/{{ r.aweme_id }}" style="text-decoration:none"><button>📖 详情</button></a>
         </div>
       </div>
     </div>
     {% endfor %}
   </div>
+
+  <!-- 分页 -->
+  <div class="pagination">
+    {% if current_page > 1 %}
+    <a href="/creator/{{ creator.sec_user_id }}?page=1&status={{ current_status or '' }}&q={{ current_q or '' }}&sort={{ current_sort }}">1</a>
+    <a href="/creator/{{ creator.sec_user_id }}?page={{ current_page - 1 }}&status={{ current_status or '' }}&q={{ current_q or '' }}&sort={{ current_sort }}">上一页</a>
+    {% endif %}
+    {% set start_page = 1 if current_page - 2 < 1 else current_page - 2 %}
+    {% set end_page = total_pages if current_page + 2 > total_pages else current_page + 2 %}
+    {% for p in range(start_page, end_page + 1) %}
+      {% if p == current_page %}
+      <span class="current">{{ p }}</span>
+      {% else %}
+      <a href="/creator/{{ creator.sec_user_id }}?page={{ p }}&status={{ current_status or '' }}&q={{ current_q or '' }}&sort={{ current_sort }}">{{ p }}</a>
+      {% endif %}
+    {% endfor %}
+    {% if current_page < total_pages %}
+    <a href="/creator/{{ creator.sec_user_id }}?page={{ current_page + 1 }}&status={{ current_status or '' }}&q={{ current_q or '' }}&sort={{ current_sort }}">下一页</a>
+    <a href="/creator/{{ creator.sec_user_id }}?page={{ total_pages }}&status={{ current_status or '' }}&q={{ current_q or '' }}&sort={{ current_sort }}">{{ total_pages }}</a>
+    {% endif %}
+    <span class="disabled" style="font-size:12px">共 {{ total_videos }} 条</span>
+  </div>
   {% else %}
-  <div class="empty">该博主暂无视频数据，点击「跑流程」开始抓取</div>
+  <div class="empty">没有匹配的视频</div>
   {% endif %}
 </div>
 
@@ -287,11 +348,38 @@
 
 <script>
 const SEC = "{{ creator.sec_user_id }}";
+const CURRENT_PAGE = {{ current_page }};
+const CURRENT_SORT = "{{ current_sort }}";
+const CURRENT_STATUS = "{{ current_status or '' }}";
+const CURRENT_Q = "{{ current_q or '' }}";
 
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 function openEdit() { openModal('editModal'); }
 function openRunModal() { openModal('runModal'); }
+
+function searchVideos() {
+  const q = document.getElementById('searchQ').value.trim();
+  const params = new URLSearchParams({ page: 1, sort: CURRENT_SORT });
+  if (CURRENT_STATUS) params.set('status', CURRENT_STATUS);
+  if (q) params.set('q', q);
+  location.href = `/creator/${SEC}?` + params.toString();
+}
+
+function sortVideos() {
+  const sort = document.getElementById('sortSelect').value;
+  const params = new URLSearchParams({ page: 1, sort: sort });
+  if (CURRENT_STATUS) params.set('status', CURRENT_STATUS);
+  if (CURRENT_Q) params.set('q', CURRENT_Q);
+  location.href = `/creator/${SEC}?` + params.toString();
+}
+
+function toggleSummary(awemeId) {
+  const el = document.getElementById('summary-' + awemeId);
+  el.classList.toggle('expanded');
+  const link = el.nextElementSibling;
+  link.textContent = el.classList.contains('expanded') ? '收起' : '展开';
+}
 
 async function submitRun(e) {
   e && e.preventDefault();
@@ -345,17 +433,25 @@ async function refreshInfo() {
   else { alert('刷新失败'); }
 }
 
-// ============ 单条/批量操作 ============
+async function submitEdit() {
+  const body = {
+    nickname: document.getElementById('editNickname').value.trim() || null,
+    category: document.getElementById('editCategory').value.trim() || null,
+    note: document.getElementById('editNote').value.trim() || null,
+  };
+  const r = await fetch(`/api/creator/${SEC}/update`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+  });
+  if (r.ok) { location.reload(); }
+}
 
 function getSelected() {
   return Array.from(document.querySelectorAll('.video-cb:checked')).map(cb => cb.value);
 }
-
 function updateSelectedCount() {
   const n = getSelected().length;
   document.getElementById('selectedCount').textContent = n ? `已选 ${n} 条` : '';
 }
-
 function toggleAll(cb) {
   document.querySelectorAll('.video-cb').forEach(box => box.checked = cb.checked);
   updateSelectedCount();
@@ -415,18 +511,6 @@ async function execBatch() {
     if (r.ok) { const d = await r.json(); alert(d.message); pollTask(); }
     else { const d = await r.json(); alert(d.detail || '操作失败'); }
   }
-}
-
-async function submitEdit() {
-  const body = {
-    nickname: document.getElementById('editNickname').value.trim() || null,
-    category: document.getElementById('editCategory').value.trim() || null,
-    note: document.getElementById('editNote').value.trim() || null,
-  };
-  const r = await fetch(`/api/creator/${SEC}/update`, {
-    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
-  });
-  if (r.ok) { location.reload(); }
 }
 
 async function stopTask() {
