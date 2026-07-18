@@ -89,6 +89,10 @@
   .dropdown-menu button:hover { background: #f5f5f5; }
   .dropdown-menu .divider { height: 1px; background: #eee; margin: 4px 0; }
 
+  /* 下拉遮罩层（点击关闭） */
+  .dropdown-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 40; }
+  .dropdown-backdrop.show { display: block; }
+
   /* Task banner */
   .task-banner { display: none; padding: 16px 20px; border-radius: 10px; margin-bottom: 20px;
                  font-size: 14px; border: 2px solid; }
@@ -233,11 +237,11 @@
         </div>
       </div>
       <div class="dropdown">
-        <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:12px" onclick="this.nextElementSibling.classList.toggle('show')">⋯</button>
+        <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:12px" onclick="toggleDropdown(this)">⋯</button>
         <div class="dropdown-menu">
-          <button onclick="singleAction('{{ r.aweme_id }}','transcribe')">🎙 转写</button>
-          <button onclick="singleAction('{{ r.aweme_id }}','summarize')">✍️ 摘要</button>
-          <button onclick="resetVideo('{{ r.aweme_id }}')">🔄 重置状态</button>
+          <button onclick="singleAction('{{ r.aweme_id }}','transcribe');closeDropdown(this)">🎙 转写</button>
+          <button onclick="singleAction('{{ r.aweme_id }}','summarize');closeDropdown(this)">✍️ 摘要</button>
+          <button onclick="resetVideo('{{ r.aweme_id }}');closeDropdown(this)">🔄 重置状态</button>
           <div class="divider"></div>
           <a href="/video/{{ r.aweme_id }}" style="text-decoration:none"><button>📖 详情</button></a>
         </div>
@@ -271,6 +275,8 @@
   <div class="empty">没有匹配的视频</div>
   {% endif %}
 </div>
+
+<div class="dropdown-backdrop" id="dropdownBackdrop" onclick="closeAllDropdowns()"></div>
 
 <!-- 编辑 Modal -->
 <div id="editModal" class="modal-overlay" onclick="if(event.target===this)this.classList.remove('show')">
@@ -321,12 +327,30 @@
     </div>
     <div class="field">
       <label>ASR 转写引擎</label>
-      <select id="runAsrProvider">
-        <option value="">使用配置文件默认</option>
-        <option value="local_whisper">本地 Whisper（免费，慢）</option>
-        <option value="groq_whisper">Groq Whisper（免费，极快）</option>
-        <option value="mimo_asr">MiMo ASR（¥0.5/h，需 MIMO_API_KEY）</option>
-      </select>
+      <div style="display:flex;gap:8px">
+        <select id="runAsrProvider" style="flex:1">
+          <option value="">使用配置文件默认</option>
+          <option value="local_whisper">本地 Whisper（免费，慢）</option>
+          <option value="groq_whisper">Groq Whisper（免费，极快）</option>
+          <option value="mimo_asr">MiMo ASR（¥0.5/h，需 MIMO_API_KEY）</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="saveAsrDefault()">设为默认</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>LLM 摘要引擎</label>
+      <div style="display:flex;gap:8px">
+        <select id="runLlmProvider" style="flex:1">
+          <option value="">使用配置文件默认</option>
+          <option value="deepseek_chat">DeepSeek Chat</option>
+          <option value="opencode_go_deepseek_v4_pro">opencode DeepSeek V4 Pro</option>
+          <option value="opencode_go_glm52">opencode GLM-5.2</option>
+          <option value="volc_glm_5_2">火山 GLM-5.2</option>
+          <option value="volc_deepseek_v4_pro">火山 DeepSeek V4 Pro</option>
+          <option value="volc_doubao_seed_2_0_pro">火山 豆包2.0 Pro</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="saveLlmDefault()">设为默认</button>
+      </div>
     </div>
     <div style="display:flex;gap:16px">
       <div class="field" style="flex:1">
@@ -352,6 +376,23 @@ const CURRENT_PAGE = {{ current_page }};
 const CURRENT_SORT = "{{ current_sort }}";
 const CURRENT_STATUS = "{{ current_status or '' }}";
 const CURRENT_Q = "{{ current_q or '' }}";
+
+// 下拉菜单
+function toggleDropdown(btn) {
+  const menu = btn.nextElementSibling;
+  const wasOpen = menu.classList.contains('show');
+  closeAllDropdowns();
+  if (!wasOpen) {
+    menu.classList.add('show');
+    document.getElementById('dropdownBackdrop').classList.add('show');
+  }
+}
+function closeAllDropdowns() {
+  document.querySelectorAll('.dropdown-menu.show').forEach(m => m.classList.remove('show'));
+  document.getElementById('dropdownBackdrop').classList.remove('show');
+}
+function closeDropdown(el) { closeAllDropdowns(); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeAllDropdowns(); });
 
 function openModal(id) { document.getElementById(id).classList.add('show'); }
 function closeModal(id) { document.getElementById(id).classList.remove('show'); }
@@ -379,6 +420,28 @@ function toggleSummary(awemeId) {
   el.classList.toggle('expanded');
   const link = el.nextElementSibling;
   link.textContent = el.classList.contains('expanded') ? '收起' : '展开';
+}
+
+async function saveAsrDefault() {
+  const v = document.getElementById('runAsrProvider').value;
+  if (!v) { alert('请先选择 ASR 引擎'); return; }
+  const r = await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({active_asr_provider: v})
+  });
+  if (r.ok) { alert('已保存为默认 ASR'); }
+  else { alert('保存失败'); }
+}
+
+async function saveLlmDefault() {
+  const v = document.getElementById('runLlmProvider').value;
+  if (!v) { alert('请先选择 LLM 引擎'); return; }
+  const r = await fetch('/api/config', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({active_llm_provider: v})
+  });
+  if (r.ok) { alert('已保存为默认 LLM'); }
+  else { alert('保存失败'); }
 }
 
 async function submitRun(e) {

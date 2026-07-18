@@ -468,6 +468,54 @@ def health():
     return {"status": "ok"}
 
 
+# ============ 配置管理 ============
+
+@app.get("/api/config")
+def api_get_config():
+    """读取当前配置"""
+    import yaml
+    llm_cfg = {}
+    asr_cfg = {}
+    if cfg.llm_providers_path.exists():
+        with cfg.llm_providers_path.open("r") as f:
+            llm_cfg = yaml.safe_load(f)
+    asr_path = cfg.data_dir / "asr_config.yaml"
+    if asr_path.exists():
+        with asr_path.open("r") as f:
+            asr_cfg = yaml.safe_load(f)
+    return {"llm": llm_cfg, "asr": asr_cfg}
+
+
+class ConfigUpdateRequest(BaseModel):
+    active_llm_provider: str | None = None
+    active_asr_provider: str | None = None
+
+
+@app.post("/api/config")
+def api_update_config(req: ConfigUpdateRequest):
+    """更新默认配置"""
+    import yaml
+    updated = []
+    if req.active_llm_provider:
+        with cfg.llm_providers_path.open("r") as f:
+            ycfg = yaml.safe_load(f)
+        ycfg["active_provider"] = req.active_llm_provider
+        with cfg.llm_providers_path.open("w") as f:
+            yaml.safe_dump(ycfg, f, allow_unicode=True, sort_keys=False)
+        updated.append(f"llm={req.active_llm_provider}")
+    if req.active_asr_provider:
+        asr_path = cfg.data_dir / "asr_config.yaml"
+        with asr_path.open("r") as f:
+            ycfg = yaml.safe_load(f)
+        ycfg["active_provider"] = req.active_asr_provider
+        with asr_path.open("w") as f:
+            yaml.safe_dump(ycfg, f, allow_unicode=True, sort_keys=False)
+        updated.append(f"asr={req.active_asr_provider}")
+    if not updated:
+        raise HTTPException(400, "no config to update")
+    return {"ok": True, "updated": updated}
+
+
 # ============ 单条视频操作 ============
 
 class VideoActionRequest(BaseModel):
