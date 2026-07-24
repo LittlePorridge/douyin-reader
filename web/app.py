@@ -659,6 +659,42 @@ def api_disk_usage():
     }
 
 
+@app.post("/api/creator/{sec_user_id}/delete-files")
+def api_delete_creator_files(sec_user_id: str, req: dict):
+    """删除指定博主的所有视频和音频文件（mp4 + wav），保留文字稿和摘要"""
+    what = req.get("what", "all")  # all | mp4 | wav
+    deleted = {"mp4": 0, "wav": 0, "bytes": 0}
+
+    with _connect() as conn:
+        if what in ("mp4", "all"):
+            rows = conn.execute(
+                "SELECT aweme_id FROM videos WHERE sec_user_id=?", (sec_user_id,)
+            ).fetchall()
+            for row in rows:
+                vdir = cfg.videos_dir / row["aweme_id"]
+                if vdir.exists():
+                    for f in vdir.rglob("*"):
+                        if f.is_file():
+                            deleted["bytes"] += f.stat().st_size
+                            deleted["mp4"] += 1
+                    import shutil as _sh
+                    _sh.rmtree(str(vdir), ignore_errors=True)
+
+        if what in ("wav", "all"):
+            for row in conn.execute(
+                "SELECT aweme_id FROM videos WHERE sec_user_id=?", (sec_user_id,)
+            ).fetchall():
+                wav = cfg.audio_dir / f"{row['aweme_id']}.wav"
+                if wav.exists():
+                    deleted["bytes"] += wav.stat().st_size
+                    deleted["wav"] += 1
+                    wav.unlink()
+
+    deleted["mb"] = round(deleted["bytes"] / 1024**2, 1)
+    return {"ok": True, "deleted": deleted,
+            "message": f"已删除 {deleted['mp4']} 个 mp4 + {deleted['wav']} 个 wav，释放 {deleted['mb']}MB"}
+
+
 @app.post("/api/cleanup")
 def api_cleanup(req: dict):
     """清理临时文件（异步任务，有进度反馈）"""

@@ -161,6 +161,7 @@
       <button class="btn btn-primary btn-sm" onclick="openRunModal()">▶️ 跑流程</button>
       <button class="btn btn-secondary btn-sm" onclick="openEdit()">✏️ 编辑</button>
       <button class="btn btn-secondary btn-sm" onclick="refreshInfo()">🔄 刷新信息</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteFiles()">🗑️ 清理文件</button>
     </div>
   </div>
 
@@ -494,6 +495,31 @@ async function refreshInfo() {
   const r = await fetch(`/api/creator/${SEC}/refresh-info`, {method:'POST'});
   if (r.ok) { location.reload(); }
   else { alert('刷新失败'); }
+}
+
+async function deleteFiles() {
+  const choice = confirm(
+    `清理该博主的所有视频和音频文件？\n\n` +
+    `将删除：\n` +
+    `  • 所有 mp4 视频文件\n` +
+    `  • 所有 wav 音频文件\n\n` +
+    `将保留：\n` +
+    `  • 文字稿（data/text/）\n` +
+    `  • LLM 摘要（data/summaries/）\n` +
+    `  • 数据库记录\n\n` +
+    `确认删除请点「确定」`
+  );
+  if (!choice) return;
+  const r = await fetch(`/api/creator/${SEC}/delete-files`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({what: 'all'})
+  });
+  if (r.ok) {
+    const d = await r.json();
+    alert(d.message);
+  } else {
+    alert('清理失败');
+  }
 }
 
 async function submitEdit() {
