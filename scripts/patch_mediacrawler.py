@@ -71,8 +71,32 @@ def patch_core():
     print("  core.py patched")
 
 
+def patch_store_media():
+    """给 save_video 加文件存在检查，已下载的跳过"""
+    path = MC / "store" / "douyin" / "douyin_store_media.py"
+    if not path.exists():
+        print(f"  skip: {path} not found")
+        return
+    content = path.read_text(encoding="utf-8")
+    if "SKIP_EXISTING" in content:
+        print("  store_media.py already patched, skip")
+        return
+
+    # 在 save_video 方法里加文件存在检查
+    old = "        pathlib.Path(self.video_store_path + \"/\" + aweme_id).mkdir(parents=True, exist_ok=True)\n        save_file_name = self.make_save_file_name(aweme_id, extension_file_name)\n        async with aiofiles.open(save_file_name, 'wb') as f:"
+    new = "        pathlib.Path(self.video_store_path + \"/\" + aweme_id).mkdir(parents=True, exist_ok=True)\n        save_file_name = self.make_save_file_name(aweme_id, extension_file_name)\n        # SKIP_EXISTING: 已下载的视频跳过，避免重复下载\n        import os as _os\n        if _os.path.exists(save_file_name) and _os.path.getsize(save_file_name) > 1000:\n            utils.logger.info(f\"[DouYinVideoStoreImplement.save_video] SKIP_EXISTING {save_file_name}\")\n            return\n        async with aiofiles.open(save_file_name, 'wb') as f:"
+
+    if old in content:
+        content = content.replace(old, new)
+        path.write_text(content, encoding="utf-8")
+        print("  store_media.py patched (skip existing videos)")
+    else:
+        print("  store_media.py: format mismatch, manual fix needed")
+
+
 if __name__ == "__main__":
     print("[patch] MediaCrawler patches:")
     patch_client()
     patch_core()
+    patch_store_media()
     print("[patch] done")
