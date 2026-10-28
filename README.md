@@ -22,8 +22,9 @@ python3 -m pip install -r requirements.txt
 # 创建数据库表
 python3 -c "import sys; sys.path.insert(0,'.'); from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
 
-# 导入预置数据（6 个博主、278 条视频、143 条摘要）
-sqlite3 data/douyin-reader.db < seed/seed.sql
+# 导入预置数据（可选）：种子数据不在仓库中，需向仓库维护者私下索取 seed.sql 放到 seed/ 下，
+# 或自己从已有数据库导出：python3 scripts/export_seed.py
+[ -f seed/seed.sql ] && sqlite3 data/douyin-reader.db < seed/seed.sql
 ```
 
 ### 第 3 步：启动 Web
@@ -86,7 +87,7 @@ cp docs/asr_config.yaml.example data/asr_config.yaml
 
 ```bash
 python3 -c "import sys; sys.path.insert(0,'.'); from src.config import load_config; from src.db import init_db; cfg=load_config(); init_db(cfg)"
-sqlite3 data/douyin-reader.db < seed/seed.sql
+[ -f seed/seed.sql ] && sqlite3 data/douyin-reader.db < seed/seed.sql
 ```
 
 ### 4. 启动 Web
@@ -170,7 +171,7 @@ douyin-reader/
 ├── README.md                # 本文件
 ├── USAGE.md                 # 使用手册
 ├── CHANGELOG.md             # 问题记录与修复日志
-├── seed/seed.sql            # 种子数据（博主+视频+摘要）
+├── seed/seed.sql            # 种子数据（本地生成，不入库）
 ├── docs/                    # 架构文档、配置模板
 ├── scripts/                 # 部署脚本、补丁、数据导出
 ├── src/                     # 后端代码

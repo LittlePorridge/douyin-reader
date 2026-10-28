@@ -28,3 +28,6 @@ MediaCrawler/.venv/
 # MediaCrawler (外部依赖，用户自行下载)
 MediaCrawler/
 data/asr_config.yaml
+
+# 种子数据：由 scripts/export_seed.py 从本地库导出，含第三方博主内容，不入库
+seed/seed.sql

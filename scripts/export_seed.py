@@ -24,8 +24,8 @@ def main():
 
     # Header
     lines.append("-- douyin-reader 种子数据")
-    lines.append("-- 由 scripts/export_seed.py 自动生成，可安全推到 GitHub")
-    lines.append("-- 导入方法: sqlite3 data/douyin-reader.db < data/seed.sql")
+    lines.append("-- 由 scripts/export_seed.py 从本地数据库导出；含第三方博主内容，请勿提交到公开仓库")
+    lines.append("-- 导入方法: sqlite3 data/douyin-reader.db < seed/seed.sql")
     lines.append("")
 
     # creators
