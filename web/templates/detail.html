@@ -68,7 +68,15 @@
 </div>
 <div class="container">
 <div class="content">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px">
 <h1>{{ row.title }}</h1>
+<button class="btn-delete" onclick="deleteVideo()">🗑 删除此视频</button>
+</div>
+<style>
+  .btn-delete { background: #fff; border: 1px solid #d33; color: #c00; padding: 6px 12px;
+    border-radius: 6px; cursor: pointer; font-size: 13px; flex-shrink: 0; }
+  .btn-delete:hover { background: #c00; color: #fff; }
+</style>
 <div class="meta">
   <span>📅 {{ row.create_time | fmt_create_time }}</span>
   <span>👍 {{ row.liked_count }}</span>
@@ -162,6 +170,18 @@
 function openTranscript() { document.getElementById('transcriptModal').classList.add('show'); }
 function closeTranscript() { document.getElementById('transcriptModal').classList.remove('show'); }
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTranscript(); });
+
+async function deleteVideo() {
+  if (!confirm('确定删除这条视频？此操作不可撤销（仅删数据库记录，不删视频/音频/文字稿文件）。')) return;
+  const r = await fetch(`/api/video/{{ row.aweme_id }}`, { method: 'DELETE' });
+  if (r.ok) {
+    {% if creator %}location.href = '/creator/{{ creator.sec_user_id }}';
+    {% else %}location.href = '/';{% endif %}
+  } else {
+    const d = await r.json().catch(() => ({}));
+    alert(d.detail || '删除失败');
+  }
+}
 </script>
 </body>
 </html>

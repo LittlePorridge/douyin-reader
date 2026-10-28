@@ -245,6 +245,7 @@
           <button onclick="resetVideo('{{ r.aweme_id }}');closeDropdown(this)">🔄 重置状态</button>
           <div class="divider"></div>
           <a href="/video/{{ r.aweme_id }}" style="text-decoration:none"><button>📖 详情</button></a>
+          <button onclick="deleteVideo('{{ r.aweme_id }}','{{ r.title | replace("'","") }}');closeDropdown(this)" style="color:#c00">🗑 删除</button>
         </div>
       </div>
     </div>
@@ -567,6 +568,13 @@ async function resetVideo(awemeId) {
   });
   if (r.ok) { alert('状态已重置'); location.reload(); }
   else { alert('重置失败'); }
+}
+
+async function deleteVideo(awemeId, title) {
+  if (!confirm(`确定删除这条视频？此操作不可撤销（仅删数据库记录，不删视频/音频/文字稿文件）。\n\n${awemeId}\n${title}`)) return;
+  const r = await fetch(`/api/video/${awemeId}`, { method: 'DELETE' });
+  if (r.ok) { alert('已删除'); location.reload(); }
+  else { const d = await r.json().catch(() => ({})); alert(d.detail || '删除失败'); }
 }
 
 async function execBatch() {

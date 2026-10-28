@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ import os
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import load_config
-from src.db import connect, add_creator, update_creator, now_ts
+from src.db import add_creator, update_creator
 from src.orchestrator import _extract_sec_user_id, _fetch_creator_info, _update_creator_info
 
 cfg = load_config()
@@ -28,11 +28,14 @@ env = Environment(
     autoescape=select_autoescape(["html", "xml"]),
 )
 
-app = FastAPI(title="douyin-reader")
+# 仅本机使用：关闭自动生成的 API 文档页面，减少暴露面
+app = FastAPI(title="douyin-reader", docs_url=None, redoc_url=None, openapi_url=None)
 
-# 后台任务列表（支持多任务并行）
+# 后台任务列表
 _tasks: list[dict] = []
-
+# 后台任务串行执行：流水线同一时间只允许一个进程（与 src/lock.py 的文件锁配合，
+# 这里排队是为了让 Web 点击多次时体验为“排队”而不是“报错”）
+_task_queue_lock = threading.Lock()
 
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(cfg.db_path, timeout=10.0)
@@ -273,21 +276,26 @@ def _run_background_task(task_type: str, cmd: list[str], cwd: str = None) -> Non
 
     def _worker():
         try:
-            env = os.environ.copy()
-            env["PYTHONUNBUFFERED"] = "1"
-            process = subprocess.Popen(
-                cmd, cwd=cwd or str(cfg.project_root),
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, env=env,
-            )
-            task["pid"] = process.pid
-            task["process"] = process
-            for line in process.stdout:
-                task["log"].append(line.rstrip())
-                if len(task["log"]) > 300:
-                    task["log"] = task["log"][-200:]
-            process.wait()
-            task["message"] = f"exit={process.returncode}"
+            task["message"] = "排队中"
+            with _task_queue_lock:
+                if task["done"]:  # 排队期间已被用户停止
+                    return
+                task["message"] = "running"
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                process = subprocess.Popen(
+                    cmd, cwd=cwd or str(cfg.project_root),
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, bufsize=1, env=env,
+                )
+                task["pid"] = process.pid
+                task["process"] = process
+                for line in process.stdout:
+                    task["log"].append(line.rstrip())
+                    if len(task["log"]) > 300:
+                        task["log"] = task["log"][-200:]
+                process.wait()
+                task["message"] = f"exit={process.returncode}"
         except Exception as e:
             task["message"] = f"error: {e}"
         finally:
@@ -409,7 +417,6 @@ def api_task_stop():
 # 旧代码不会执行到这里
     if process:
         # 杀进程树（含子进程）
-        import signal
         try:
             # 先杀子进程再杀主进程
             import subprocess as sp
@@ -549,6 +556,8 @@ def api_summarize_one(aweme_id: str, req: VideoActionRequest):
 def api_reset_video(aweme_id: str, req: dict):
     """重置视频状态"""
     status = req.get("status", "downloaded")
+    if status not in STATUS_ZH:
+        raise HTTPException(400, f"非法状态: {status}")
     with _connect() as conn:
         n = conn.execute(
             "UPDATE videos SET status=?, status_message=NULL, retry_count=0 WHERE aweme_id=?",
@@ -598,6 +607,8 @@ def api_batch_action(req: BatchActionRequest):
             cmd.extend(["--llm-provider", req.llm_provider])
         _run_background_task(f"批量摘要:{len(req.aweme_ids)}条", cmd)
     elif req.action == "reset":
+        if req.status not in STATUS_ZH:
+            raise HTTPException(400, f"非法状态: {req.status}")
         with _connect() as conn:
             for aid in req.aweme_ids:
                 conn.execute(
@@ -663,12 +674,15 @@ def api_disk_usage():
 def api_delete_creator_files(sec_user_id: str, req: dict):
     """删除指定博主的所有视频和音频文件（mp4 + wav），保留文字稿和摘要"""
     what = req.get("what", "all")  # all | mp4 | wav
+    if what not in ("all", "mp4", "wav"):
+        raise HTTPException(400, f"未知清理类型: {what}")
     deleted = {"mp4": 0, "wav": 0, "bytes": 0}
 
+    # 只清理已完成（done）视频的文件：未完成的视频还需要 mp4/wav 参与转写，删除会导致后续失败
     with _connect() as conn:
         if what in ("mp4", "all"):
             rows = conn.execute(
-                "SELECT aweme_id FROM videos WHERE sec_user_id=?", (sec_user_id,)
+                "SELECT aweme_id FROM videos WHERE sec_user_id=? AND status='done'", (sec_user_id,)
             ).fetchall()
             for row in rows:
                 vdir = cfg.videos_dir / row["aweme_id"]
@@ -682,7 +696,7 @@ def api_delete_creator_files(sec_user_id: str, req: dict):
 
         if what in ("wav", "all"):
             for row in conn.execute(
-                "SELECT aweme_id FROM videos WHERE sec_user_id=?", (sec_user_id,)
+                "SELECT aweme_id FROM videos WHERE sec_user_id=? AND status='done'", (sec_user_id,)
             ).fetchall():
                 wav = cfg.audio_dir / f"{row['aweme_id']}.wav"
                 if wav.exists():
