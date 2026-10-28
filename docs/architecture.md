@@ -167,6 +167,12 @@ def summarize_one(video: Video) -> None:
 只输出 JSON，不要其他文字，不要 markdown 围栏。
 ```
 
+**长文字稿分段（已实现）**：
+- 文字稿 ≤ 10000 字符：单次调用，与原逻辑一致
+- 文字稿 > 10000 字符（约 4% 的视频）：按行切成 ≤ 6000 字符的段，逐段生成笔记（纯文本，≤400 字），再把全部笔记（带 `【第 i 段】` 标记）作为最终输入生成 JSON
+- 每段笔记立即缓存到 `data/partials/<aweme_id>.<provider>.json`，缓存键含段序号与段内容哈希；后续失败重试只补缺失段，文字稿变化自动失效；成功后删除缓存
+- 分段失败与最终调用失败一样记为 `summarize_failed`，计入重试次数
+
 **校验逻辑**：
 - 用 `json.loads` 解析
 - 必须包含 `summary` (str), `key_points` (list[str]), `knowledge_points` (list[dict])

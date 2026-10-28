@@ -58,10 +58,111 @@ def _mark_failed(conn: sqlite3.Connection, aweme_id: str, msg: str) -> None:
     )
 
 
+# ---------- 分段摘要 ----------
+# 文字稿超过 SEGMENT_THRESHOLD 时，先按段生成笔记，再基于全部笔记生成最终 JSON。
+# 不再硬截断：原先截断到 10000 字符会丢掉长视频的后半段内容。
+SEGMENT_THRESHOLD = 10000   # 超过该长度才分段（约 4% 的视频会触发）
+SEGMENT_CHARS = 6000        # 每段目标长度（字符）
+
+SEGMENT_SYSTEM_PROMPT = """你是一位细心的读书笔记整理者。下面给你一段视频文字稿的某一段（带时间戳）。
+请提取这一段的核心论点、关键概念、举例与论证步骤，用简洁的中文条目输出纯文本笔记：
+- 按原文顺序，不遗漏重要论点
+- 不要 JSON，不要 markdown 标题，不要前言和总结
+- 控制在 400 字以内"""
+
+
 def _build_user_prompt(title: str, transcript: str) -> str:
-    if len(transcript) > 10000:
-        transcript = transcript[:10000] + "\n... (truncated)"
     return f"视频标题：{title}\n\n视频文字稿（带时间戳）：\n{transcript}"
+
+
+def _build_notes_prompt(title: str, notes: str) -> str:
+    return (
+        f"视频标题：{title}\n\n以下是该视频文字稿按顺序分段整理出的笔记，"
+        f"已覆盖全部内容（【第 i 段】为原文顺序）：\n\n{notes}"
+    )
+
+
+def split_transcript(text: str, max_chars: int = SEGMENT_CHARS) -> list[str]:
+    """按行切分文字稿，每段不超过 max_chars；单行超长时硬切。不丢字符。"""
+    chunks: list[str] = []
+    cur: list[str] = []
+    size = 0
+
+    def flush():
+        nonlocal cur, size
+        if cur:
+            chunks.append("\n".join(cur))
+            cur, size = [], 0
+
+    for line in text.splitlines():
+        while len(line) > max_chars:
+            flush()
+            chunks.append(line[:max_chars])
+            line = line[max_chars:]
+        if cur and size + len(line) + 1 > max_chars:
+            flush()
+        cur.append(line)
+        size += len(line) + 1
+    flush()
+    return chunks
+
+
+def _partial_path(cfg: Config, aweme_id: str, provider_name: str) -> Path:
+    # 按 provider 区分：不同模型的笔记不能混用
+    return cfg.data_dir / "partials" / f"{aweme_id}.{provider_name}.json"
+
+
+def _load_partials(cfg: Config, aweme_id: str, provider_name: str) -> dict[str, str]:
+    p = _partial_path(cfg, aweme_id, provider_name)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def _save_partials(cfg: Config, aweme_id: str, provider_name: str, cache: dict[str, str]) -> None:
+    p = _partial_path(cfg, aweme_id, provider_name)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+
+def _clear_partials(cfg: Config, aweme_id: str, provider_name: str) -> None:
+    p = _partial_path(cfg, aweme_id, provider_name)
+    if p.exists():
+        p.unlink()
+
+
+def _build_segment_notes(cfg: Config, provider: LLMProvider, aweme_id: str,
+                         title: str, transcript: str) -> str:
+    """逐段调用 LLM 生成笔记。每段结果立即落盘缓存：后续失败重试时不会重复花钱。
+    缓存键包含段序号与段内容哈希，文字稿变化后自动失效。"""
+    import hashlib
+
+    segments = split_transcript(transcript, SEGMENT_CHARS)
+    cache = _load_partials(cfg, aweme_id, provider.name)
+    total = len(segments)
+    notes: list[str] = []
+    for i, seg in enumerate(segments, 1):
+        digest = hashlib.sha1(seg.encode("utf-8")).hexdigest()[:12]
+        key = f"{i}:{digest}"
+        if key in cache:
+            print(f"[summarize] {aweme_id} segment {i}/{total} reused from cache")
+            notes.append(cache[key])
+            continue
+        print(f"[summarize] {aweme_id} segment {i}/{total} ({len(seg)} chars)")
+        messages = [
+            {"role": "system", "content": SEGMENT_SYSTEM_PROMPT},
+            {"role": "user", "content": f"视频标题：{title}\n第 {i}/{total} 段文字稿：\n{seg}"},
+        ]
+        text = provider.chat(messages).strip()
+        if not text:
+            raise ValueError(f"segment {i}/{total} returned empty notes")
+        cache[key] = text
+        _save_partials(cfg, aweme_id, provider.name, cache)
+        notes.append(text)
+    return "\n\n".join(f"【第 {i} 段】\n{n}" for i, n in enumerate(notes, 1))
 
 
 def _validate_llm_json(data: dict) -> None:
@@ -241,16 +342,21 @@ def summarize_one(cfg: Config, aweme_id: str, provider: LLMProvider) -> bool:
                 return False
 
     title = row["title"] or aweme_id
-    user_prompt = _build_user_prompt(title, transcript)
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ]
-
     print(f"[summarize] {aweme_id} calling {provider.name}/{provider.model} (transcript {len(transcript)} chars)")
     print(f"[summarize] ▶ NOW 正在处理: {aweme_id} ({title[:30]})")
     t0 = time.time()
     try:
+        # 分段生成放在 try 内：失败会被记为 summarize_failed 并计入重试次数，
+        # 已完成的分段保存在 data/partials/，重试时不重复调用
+        if len(transcript) > SEGMENT_THRESHOLD:
+            notes = _build_segment_notes(cfg, provider, aweme_id, title, transcript)
+            user_prompt = _build_notes_prompt(title, notes)
+        else:
+            user_prompt = _build_user_prompt(title, transcript)
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
         raw = provider.chat(messages)
         try:
             data = _parse_json_lenient(raw)
@@ -277,6 +383,7 @@ def summarize_one(cfg: Config, aweme_id: str, provider: LLMProvider) -> bool:
             data, provider.name, provider.model,
         )
         _save_llm_summary(cfg, aweme_id, provider.name, provider.model, data, md_path, duration)
+        _clear_partials(cfg, aweme_id, provider.name)
 
         # 如果之前是 summarizing，转 done（若已 done 则不动）
         if row["status"] == "transcribed":
