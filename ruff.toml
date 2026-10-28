@@ -1,0 +1,6 @@
+# 只检查本项目代码；MediaCrawler 为外部依赖，不做 lint
+extend-exclude = ["MediaCrawler", "data", "seed", "scripts/__pycache__"]
+
+[lint]
+# 历史代码风格问题暂不作为失败项（逐步清理后可收紧）
+extend-ignore = ["E701", "E722", "E741"]

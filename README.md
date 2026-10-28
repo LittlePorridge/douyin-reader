@@ -13,7 +13,7 @@
 ```bash
 git clone https://github.com/LittlePorridge/douyin-reader.git
 cd douyin-reader
-pip install fastapi uvicorn jinja2 pyyaml
+python3 -m pip install -r requirements.txt
 ```
 
 ### 第 2 步：初始化数据库 & 导入数据
@@ -51,21 +51,17 @@ python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 
 ## 🚀 完整部署（抓取 + 转写 + 摘要）
 
-### 1. 安装 MediaCrawler
+### 1. 安装依赖与 MediaCrawler
 
 ```bash
-# 下载 MediaCrawler
-curl -sL -o /tmp/mc.zip "https://codeload.github.com/NanmiCoder/MediaCrawler/zip/refs/heads/main"
-unzip -q -o /tmp/mc.zip -d /tmp/
-mv /tmp/MediaCrawler-main MediaCrawler
-rm /tmp/mc.zip
+# 本项目依赖（开发/测试另加 requirements-dev.txt）
+python3 -m pip install -r requirements.txt
 
-# 安装依赖
-cd MediaCrawler && uv sync && uv run playwright install chromium && cd ..
-
-# 打补丁（支持限制抓取数量 + 博主信息获取）
-python3 scripts/patch_mediacrawler.py
+# 下载并安装 MediaCrawler（建议固定到具体 commit，保证可复现）
+MEDIACRAWLER_REF=<commit-sha> bash scripts/setup.sh
 ```
+
+> MediaCrawler 不需要打补丁：条数上限和跳过已下载视频由 `scripts/mediacrawler_launcher.py` 在运行时完成，`MediaCrawler/` 目录保持只读。
 
 ### 2. 配置 API Key
 

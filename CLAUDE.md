@@ -18,7 +18,7 @@
 
 ## 设计原则
 
-1. **MediaCrawler 是外部不稳组件**：我们的代码只认它产出的 `jsonl` + `mp4` 文件，不直接 import 它，写成子进程调用
+1. **MediaCrawler 是外部不稳组件**：我们的代码只认它产出的 `jsonl` + `mp4` 文件，通过子进程调用（`scripts/mediacrawler_launcher.py`）。launcher 在子进程内导入并包装 MediaCrawler 的两个方法（分页接口、落盘接口），这是已知耦合点：MediaCrawler 升级后需跑 `tests/` 中的启动器相关测试确认包装仍然生效。`MediaCrawler/` 目录本身保持只读
 2. **状态机驱动**：每个视频是有状态工件，状态保存在 SQLite，任何时候可从断点继续
 3. **所有处理步骤幂等**：靠 `aweme_id` 主键去重；重复运行不会重复下载/转写/调用 LLM
 4. **单编排器串行化**：一次运行由 `orchestrator.py` 按序驱动各阶段，不存在多进程争抢任务（单机够用，无需 Redis/队列）
@@ -45,7 +45,7 @@ douyin-reader/
 │   └── douyin-reader.db            # SQLite
 ├── src/
 │   ├── orchestrator.py             # 编排器入口
-│   ├── crawler_runner.py           # 调用 MediaCrawler
+│   ├── (抓取) orchestrator.py 调用 scripts/mediacrawler_launcher.py
 │   ├── importer.py                 # jsonl → SQLite
 │   ├── transcribe_worker.py        # ASR worker
 │   ├── summarize_worker.py         # LLM 摘要 worker
@@ -87,8 +87,9 @@ new ──→ downloaded ──→ transcribing ──→ transcribed ──→ 
 - `transcribed`：文字稿已落盘
 - `summarizing`：LLM 进行中
 - `done`：摘要完成
-- `transcribe_failed` / `summarize_failed`：失败，记录 `status_message`，下次重试
-- `manual_failed`：重试满 3 次，等人工介入
+- `transcribe_failed` / `summarize_failed`：失败，记录 `status_message`，下次运行开始时由 `requeue_failed` 自动放回待处理（回到 `downloaded` / `transcribed`）
+- `manual_failed`：`retry_count` 达到 `MAX_RETRY=3`，不再自动重试，等人工介入（`reset` 命令恢复）
+- `transcribing` / `summarizing` 是中间态：进程被杀后会遗留，只能在确认无后台任务时执行 `python -m src.orchestrator recover --yes` 回退
 
 ## 增量抓取策略
 
@@ -120,11 +121,11 @@ ruff format --check src/ web/
 # Type check（可选，MVP 阶段可不开）
 # pyright src/
 
-# 单元测试
-pytest tests/
+# 单元测试（只使用临时目录，不触碰真实 data/）
+python -m pytest -q tests
 
-# 端到端手动验证（用 1 个视频跑全链路）
-python -m src.orchestrator run-once --sec-user-id <id> --max-new-videos 1
+# 端到端手动验证（只跑某个博主的转写与摘要，抓取可用 --stages 跳过）
+python -m src.orchestrator run --sec-user-id <id> --max-videos 1
 ```
 
 ## 当前阶段

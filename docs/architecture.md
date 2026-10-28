@@ -62,7 +62,7 @@ def run(creator: Creator) -> Path:
 ```
 
 **细节**：
-- 不修改 `MediaCrawler/config/` 原文件，临时配置写到 `data/generated/dy_config_override.py`，靠 `PYTHONPATH` 注入或临时复制替换（先用 tempdir 复制替换最简单）
+- 通过 `scripts/mediacrawler_launcher.py` 启动 MediaCrawler：博主用 `--creator_id` 传入，条数上限与跳过已下载视频在进程内包装实现；`MediaCrawler/` 目录只读，不改 `config/`、不打源码补丁
 - 登录态复用 `MediaCrawler/browser_data/dy_user_data_dir`，已建立就不再扫码
 - 增量抓取：MediaCrawler 本身不支持，但全量列表请求只要 2 分钟，bootstrap 后每次跑全量即可
 - 限制条数：通过 `--max-new-videos N` 让 importer 提前停（不限制 MediaCrawler 抓列表，只限制 importer 把多少条 new 入库）
