@@ -6,14 +6,19 @@ import re
 import subprocess
 import sys
 import time
-from pathlib import Path
 
 from .config import Config, load_config
-from .db import connect, init_db, add_creator, get_creator, list_creators, update_creator, now_ts
-from .importer import import_latest
+from .db import (connect, init_db, add_creator, get_creator, list_creators, update_creator, now_ts,
+                 TickResult, requeue_failed, recover_stale)
+from .importer import import_since, jsonl_offsets, ImportResult
 from .transcribe_worker import tick as transcribe_tick
 from .summarize_worker import tick as summarize_tick
 from .llm_client import load_provider_from_yaml
+from .lock import LockBusy, pipeline_lock
+
+
+class CrawlError(RuntimeError):
+    """MediaCrawler 抓取失败：此时不导入任何数据，避免导入旧的/别人的记录"""
 
 
 SEC_USER_ID_PATTERN = re.compile(r"MS4wLjAB[A-Za-z0-9_\-]+")
@@ -29,53 +34,28 @@ def _extract_sec_user_id(url: str) -> str | None:
     return m.group(0) if m else None
 
 
-def _gen_dy_config(creator_url: str) -> str:
-    return f'''# -*- coding: utf-8 -*-
-# 自动生成 - do not edit
-PUBLISH_TIME_TYPE = 0
-DY_SPECIFIED_ID_LIST = []
-DY_CREATOR_ID_LIST = [
-    "{creator_url}",
-]
-'''
-
-
 def _run_mediacrawler(cfg: Config, sec_user_id: str, login_type: str = "cookie",
                       max_videos: int = 0) -> bool:
-    """调 MediaCrawler 子进程。max_videos=0 表示全量"""
-    dy_config_path = cfg.mediacrawler_dir / "config" / "dy_config.py"
-    backup_path = dy_config_path.with_suffix(".py.bak")
-    if dy_config_path.exists() and not backup_path.exists():
-        backup_path.write_text(dy_config_path.read_text(encoding="utf-8"), encoding="utf-8")
-    creator_url = f"https://www.douyin.com/user/{sec_user_id}"
-    dy_config_path.write_text(_gen_dy_config(creator_url), encoding="utf-8")
-
-    env = os.environ.copy()
-    env["DY_MAX_POSTS"] = str(max_videos) if max_videos > 0 else "0"
-
-    try:
-        print(f"[orchestrator] running MediaCrawler for {sec_user_id} (max_videos={max_videos or 'unlimited'})")
-        cmd = ["uv", "run", "main.py", "--platform", "dy", "--lt", login_type, "--type", "creator"]
-        t0 = time.time()
-        r = subprocess.run(cmd, cwd=str(cfg.mediacrawler_dir), env=env)
-        dt = time.time() - t0
-        print(f"[orchestrator] MediaCrawler exit={r.returncode} dt={dt:.1f}s")
-        return r.returncode == 0
-    finally:
-        if backup_path.exists():
-            dy_config_path.write_text(backup_path.read_text(encoding="utf-8"), encoding="utf-8")
+    """调 MediaCrawler 子进程（经 scripts/mediacrawler_launcher.py 启动）。
+    不改写 MediaCrawler/ 下的任何文件；max_videos=0 表示全量。"""
+    launcher = cfg.project_root / "scripts" / "mediacrawler_launcher.py"
+    cmd = ["uv", "run", "python", str(launcher),
+           "--sec-user-id", sec_user_id, "--login-type", login_type,
+           "--max-videos", str(max_videos)]
+    print(f"[orchestrator] running MediaCrawler for {sec_user_id[:12]}... (max_videos={max_videos or 'unlimited'})")
+    t0 = time.time()
+    r = subprocess.run(cmd, cwd=str(cfg.mediacrawler_dir))
+    print(f"[orchestrator] MediaCrawler exit={r.returncode} dt={time.time() - t0:.1f}s")
+    return r.returncode == 0
 
 
 def _fetch_creator_info(cfg: Config, sec_user_id: str) -> dict | None:
-    script = cfg.mediacrawler_dir / "fetch_creator_info.py"
-    if not script.exists():
-        src_script = cfg.project_root / "scripts" / "fetch_creator_info.py"
-        if src_script.exists():
-            import shutil
-            shutil.copy(str(src_script), str(script))
+    # 脚本保留在本项目 scripts/ 下，以 cwd=MediaCrawler 运行（它依赖 MediaCrawler 的相对路径与模块），
+    # 不再把脚本复制进 MediaCrawler/，遵守“不修改 MediaCrawler 目录”的约束
+    script = cfg.project_root / "scripts" / "fetch_creator_info.py"
     if not script.exists():
         return None
-    cmd = ["uv", "run", "python", "fetch_creator_info.py", sec_user_id]
+    cmd = ["uv", "run", "python", str(script), sec_user_id]
     try:
         r = subprocess.run(cmd, cwd=str(cfg.mediacrawler_dir),
                            capture_output=True, text=True, timeout=60)
@@ -115,53 +95,70 @@ def _promote_new_to_downloaded(cfg: Config) -> int:
     return promoted
 
 
-def _do_crawl(cfg: Config, sec_user_id: str, login_type: str, max_videos: int) -> None:
-    """阶段 1：抓取 + 导入 + 获取博主信息"""
-    _run_mediacrawler(cfg, sec_user_id, login_type=login_type, max_videos=max_videos)
-    r = import_latest(cfg, sec_user_id)
+def _do_crawl(cfg: Config, sec_user_id: str, login_type: str, max_videos: int) -> ImportResult:
+    """阶段 1：抓取 + 导入（只导入本次抓取新增的行）+ 获取博主信息。
+    抓取失败抛出 CrawlError，且不导入任何数据。"""
+    offsets = jsonl_offsets(cfg)
+    ok = _run_mediacrawler(cfg, sec_user_id, login_type=login_type, max_videos=max_videos)
+    if not ok:
+        raise CrawlError(f"MediaCrawler 抓取失败 sec_user_id={sec_user_id[:12]}...，已跳过导入")
+    r = import_since(cfg, sec_user_id, offsets)
     print(f"  import: new={r.new_count} existing={r.existing_count}")
     info = _fetch_creator_info(cfg, sec_user_id)
     if info and "error" not in info:
         _update_creator_info(cfg, sec_user_id, info)
         print(f"  creator info: {info.get('nickname')}")
+    return r
 
 
-def _do_transcribe(cfg: Config, batch: int, limit: int = 0, asr_provider: str = "") -> int:
-    """阶段 2：ASR 转写。返回处理条数"""
+def _log_requeue(cfg: Config) -> None:
+    changed = requeue_failed(cfg)
+    if any(changed.values()):
+        print(f"[retry] {changed}")
+
+
+def _do_transcribe(cfg: Config, batch: int, limit: int = 0, asr_provider: str = "") -> TickResult:
+    """阶段 2：ASR 转写。单条失败不中断批次，返回汇总结果"""
     if asr_provider:
         os.environ["ASR_PROVIDER_OVERRIDE"] = asr_provider
+    _log_requeue(cfg)
     _promote_new_to_downloaded(cfg)
-    processed = 0
+    total = TickResult()
     effective_limit = limit if limit > 0 else ASR_BATCH_LIMIT
     while True:
-        remaining = effective_limit - processed if effective_limit > 0 else batch
+        remaining = effective_limit - total.attempted
         if remaining <= 0:
             print(f"[transcribe] reached batch limit ({effective_limit}), stopping")
             break
-        n = transcribe_tick(cfg, max_process=min(batch, remaining))
-        if n == 0:
+        r = transcribe_tick(cfg, max_process=min(batch, remaining))
+        if r.attempted == 0:
             break
-        processed += n
-        print(f"[transcribe] processed {processed} videos so far")
-    return processed
+        total.ok += r.ok
+        total.failed += r.failed
+        total.skipped += r.skipped
+        print(f"[transcribe] ok={total.ok} failed={total.failed} skipped={total.skipped}")
+    return total
 
 
-def _do_summarize(cfg: Config, batch: int, limit: int = 0) -> int:
-    """阶段 3：LLM 摘要。返回处理条数"""
+def _do_summarize(cfg: Config, batch: int, limit: int = 0) -> TickResult:
+    """阶段 3：LLM 摘要。单条失败不中断批次，返回汇总结果"""
+    _log_requeue(cfg)
     provider = load_provider_from_yaml(cfg.llm_providers_path)
-    processed = 0
+    total = TickResult()
     effective_limit = limit if limit > 0 else LLM_BATCH_LIMIT
     while True:
-        remaining = effective_limit - processed if effective_limit > 0 else batch
+        remaining = effective_limit - total.attempted
         if remaining <= 0:
             print(f"[summarize] reached batch limit ({effective_limit}), stopping")
             break
-        n = summarize_tick(cfg, provider, max_process=min(batch, remaining))
-        if n == 0:
+        r = summarize_tick(cfg, provider, max_process=min(batch, remaining))
+        if r.attempted == 0:
             break
-        processed += n
-        print(f"[summarize] processed {processed} videos so far")
-    return processed
+        total.ok += r.ok
+        total.failed += r.failed
+        total.skipped += r.skipped
+        print(f"[summarize] ok={total.ok} failed={total.failed} skipped={total.skipped}")
+    return total
 
 
 def _get_pending_counts(cfg: Config, sec_user_id: str | None = None) -> dict:
@@ -195,6 +192,13 @@ def cmd_add_creator(cfg: Config, args: argparse.Namespace) -> None:
     print(f"creator added: {sec} nickname={args.nickname}")
 
 
+def _report_and_exit(failed: int, extra: str = "") -> None:
+    """统一退出码：有失败则非零，供 Web 后台任务 banner 正确报红"""
+    if failed:
+        print(f"\n=== finished with {failed} failure(s) {extra}===")
+        sys.exit(1)
+
+
 def cmd_run(cfg: Config, args: argparse.Namespace) -> None:
     """完整流程，可选择执行哪些阶段"""
     init_db(cfg)
@@ -214,12 +218,18 @@ def cmd_run(cfg: Config, args: argparse.Namespace) -> None:
 
     stages = args.stages.split(",") if args.stages else ["crawl", "transcribe", "summarize"]
     max_videos = args.max_videos or 0
+    failed = 0
     total_transcribed = 0
     total_summarized = 0
 
     if "crawl" in stages:
         print(f"=== [crawl] max_videos={max_videos or 'all'} ===")
-        _do_crawl(cfg, sec, args.login_type, max_videos)
+        try:
+            _do_crawl(cfg, sec, args.login_type, max_videos)
+        except CrawlError as e:
+            # 抓取失败不影响处理已入库但未完成的视频
+            print(f"[crawl] {e}")
+            failed += 1
 
     if "transcribe" in stages:
         pending = _get_pending_counts(cfg, sec)
@@ -227,7 +237,9 @@ def cmd_run(cfg: Config, args: argparse.Namespace) -> None:
         if pending["downloaded"] + pending["failed"] == 0:
             print("  nothing to transcribe")
         else:
-            total_transcribed = _do_transcribe(cfg, args.batch, limit=args.transcribe_limit, asr_provider=args.asr_provider)
+            r = _do_transcribe(cfg, args.batch, limit=args.transcribe_limit, asr_provider=args.asr_provider)
+            total_transcribed = r.ok
+            failed += r.failed
 
     if "summarize" in stages:
         pending = _get_pending_counts(cfg, sec)
@@ -235,15 +247,18 @@ def cmd_run(cfg: Config, args: argparse.Namespace) -> None:
         if pending["transcribed"] == 0:
             print("  nothing to summarize")
         else:
-            total_summarized = _do_summarize(cfg, args.batch, limit=args.summarize_limit)
+            r = _do_summarize(cfg, args.batch, limit=args.summarize_limit)
+            total_summarized = r.ok
+            failed += r.failed
 
-    print(f"\n=== done: transcribed={total_transcribed} summarized={total_summarized} ===")
+    print(f"\n=== done: transcribed={total_transcribed} summarized={total_summarized} failed={failed} ===")
     with connect(cfg) as conn:
         stats = conn.execute(
             "SELECT status, count(*) as n FROM videos WHERE sec_user_id=? GROUP BY status", (sec,)
         ).fetchall()
         for s in stats:
             print(f"  {s['status']}: {s['n']}")
+    _report_and_exit(failed)
 
 
 def cmd_run_all(cfg: Config, args: argparse.Namespace) -> None:
@@ -253,13 +268,22 @@ def cmd_run_all(cfg: Config, args: argparse.Namespace) -> None:
         print("no enabled creators. add one: python -m src.orchestrator add-creator --url ...")
         return
     print(f"found {len(creators)} enabled creators")
+    failed = 0
     for i, c in enumerate(creators, 1):
         sec = c["sec_user_id"]
         print(f"\n=== [{i}/{len(creators)}] {c['nickname'] or sec[:20]} ===")
-        _do_crawl(cfg, sec, args.login_type, args.max_videos or 0)
-        _do_transcribe(cfg, args.batch, limit=args.transcribe_limit)
-        _do_summarize(cfg, args.batch, limit=args.summarize_limit)
+        try:
+            _do_crawl(cfg, sec, args.login_type, args.max_videos or 0)
+        except CrawlError as e:
+            # 一个博主抓取失败不影响其他博主
+            print(f"[crawl] {e}")
+            failed += 1
+        r = _do_transcribe(cfg, args.batch, limit=args.transcribe_limit)
+        failed += r.failed
+        r = _do_summarize(cfg, args.batch, limit=args.summarize_limit)
+        failed += r.failed
     print(f"\n=== all {len(creators)} creators done ===")
+    _report_and_exit(failed)
 
 
 def cmd_transcribe(cfg: Config, args: argparse.Namespace) -> None:
@@ -267,8 +291,9 @@ def cmd_transcribe(cfg: Config, args: argparse.Namespace) -> None:
     init_db(cfg)
     pending = _get_pending_counts(cfg)
     print(f"pending: {pending['downloaded']} downloaded, {pending['failed']} failed")
-    n = _do_transcribe(cfg, args.batch, limit=args.limit)
-    print(f"transcribed {n} videos")
+    r = _do_transcribe(cfg, args.batch, limit=args.limit)
+    print(f"transcribed {r.ok} videos, failed {r.failed}")
+    _report_and_exit(r.failed)
 
 
 def cmd_summarize(cfg: Config, args: argparse.Namespace) -> None:
@@ -281,16 +306,32 @@ def cmd_summarize(cfg: Config, args: argparse.Namespace) -> None:
         return
     if pending["transcribed"] > LLM_BATCH_LIMIT and not args.yes:
         print(f"warning: {pending['transcribed']} videos pending, will process up to {LLM_BATCH_LIMIT}")
-        if not input(f"continue? (y/n) ").strip().lower().startswith("y"):
+        if not input("continue? (y/n) ").strip().lower().startswith("y"):
             print("aborted")
             return
-    n = _do_summarize(cfg, args.batch, limit=args.limit)
-    print(f"summarized {n} videos")
+    r = _do_summarize(cfg, args.batch, limit=args.limit)
+    print(f"summarized {r.ok} videos, failed {r.failed}")
+    _report_and_exit(r.failed)
 
 
 def cmd_crawl(cfg: Config, args: argparse.Namespace) -> None:
     init_db(cfg)
-    _do_crawl(cfg, args.sec_user_id, args.login_type, args.max_videos or 0)
+    try:
+        _do_crawl(cfg, args.sec_user_id, args.login_type, args.max_videos or 0)
+    except CrawlError as e:
+        print(f"[crawl] {e}")
+        _report_and_exit(1)
+
+
+def cmd_recover(cfg: Config, args: argparse.Namespace) -> None:
+    """回退遗留的中间态（transcribing/summarizing）。
+    仅在确认没有任何转写/摘要进程在运行时使用，否则会误伤正在处理的视频。"""
+    init_db(cfg)
+    if not args.yes:
+        print("将把 transcribing→downloaded、summarizing→transcribed。请确认没有后台任务在运行，加 --yes 执行。")
+        return
+    print(recover_stale(cfg))
+    print(requeue_failed(cfg))
 
 
 def cmd_list_creators(cfg: Config, args: argparse.Namespace) -> None:
@@ -329,7 +370,7 @@ def cmd_reauth(cfg: Config, args: argparse.Namespace) -> None:
     if browser_data.exists():
         import shutil
         shutil.rmtree(browser_data)
-        print(f"cleared login state")
+        print("cleared login state")
     else:
         print("no login state found")
 
@@ -398,19 +439,22 @@ def cmd_transcribe_batch(cfg: Config, args: argparse.Namespace) -> None:
     from .transcribe_worker import transcribe_one
     if args.asr_provider:
         os.environ["ASR_PROVIDER_OVERRIDE"] = args.asr_provider
-    ids = args.aweme_ids.split(",")
+    ids = [x.strip() for x in args.aweme_ids.split(",") if x.strip()]
+    failed = 0
     for i, aid in enumerate(ids):
-        aid = aid.strip()
-        if not aid:
-            continue
         print(f"=== [{i+1}/{len(ids)}] {aid} ===")
         with connect(cfg) as conn:
             conn.execute(
                 "UPDATE videos SET status='downloaded', status_message=NULL, retry_count=0 WHERE aweme_id=?",
                 (aid,),
             )
-        transcribe_one(cfg, aid)
-    print(f"batch transcribe done: {len(ids)} videos")
+        try:
+            transcribe_one(cfg, aid)
+        except Exception as e:
+            failed += 1
+            print(f"[transcribe-batch] {aid} failed, continue: {e!r}")
+    print(f"batch transcribe done: {len(ids)} videos, failed {failed}")
+    _report_and_exit(failed)
 
 
 def cmd_summarize_batch(cfg: Config, args: argparse.Namespace) -> None:
@@ -426,19 +470,22 @@ def cmd_summarize_batch(cfg: Config, args: argparse.Namespace) -> None:
         with cfg.llm_providers_path.open("w") as f:
             yaml.safe_dump(ycfg, f, allow_unicode=True)
     provider = load_provider_from_yaml(cfg.llm_providers_path)
-    ids = args.aweme_ids.split(",")
+    ids = [x.strip() for x in args.aweme_ids.split(",") if x.strip()]
+    failed = 0
     for i, aid in enumerate(ids):
-        aid = aid.strip()
-        if not aid:
-            continue
         print(f"=== [{i+1}/{len(ids)}] {aid} ===")
         with connect(cfg) as conn:
             conn.execute(
                 "UPDATE videos SET status='transcribed', status_message=NULL WHERE aweme_id=?",
                 (aid,),
             )
-        summarize_one(cfg, aid, provider)
-    print(f"batch summarize done: {len(ids)} videos")
+        try:
+            summarize_one(cfg, aid, provider)
+        except Exception as e:
+            failed += 1
+            print(f"[summarize-batch] {aid} failed, continue: {e!r}")
+    print(f"batch summarize done: {len(ids)} videos, failed {failed}")
+    _report_and_exit(failed)
 
 
 def cmd_cleanup(cfg: Config, args: argparse.Namespace) -> None:
@@ -521,6 +568,13 @@ def cmd_status(cfg: Config, args: argparse.Namespace) -> None:
         pending = _get_pending_counts(cfg, args.sec_user_id)
         print(f"\n=== {args.sec_user_id[:20]}... ===")
         print(f"  downloaded: {pending['downloaded']}  transcribed: {pending['transcribed']}  done: {pending['done']}")
+
+
+# 会修改视频状态或文件的命令：必须在流水线锁内执行
+LOCKED_COMMANDS = {
+    "run", "run-all", "crawl", "transcribe", "summarize", "recover", "reset",
+    "transcribe-one", "summarize-one", "transcribe-batch", "summarize-batch", "cleanup",
+}
 
 
 def main() -> None:
@@ -610,6 +664,11 @@ def main() -> None:
     p_refresh.add_argument("--sec-user-id", required=True)
     p_refresh.set_defaults(func=lambda a: cmd_refresh_creator_info(cfg, a))
 
+    # recover
+    p_rec = sub.add_parser("recover", help="回退遗留的 transcribing/summarizing 中间态（无任务运行时使用）")
+    p_rec.add_argument("--yes", action="store_true", help="确认执行（流水线命令会在持锁后自动执行回退）")
+    p_rec.set_defaults(func=lambda a: cmd_recover(cfg, a))
+
     # reset
     p_reset = sub.add_parser("reset", help="重置视频状态")
     p_reset.add_argument("--aweme-id", required=True)
@@ -645,7 +704,21 @@ def main() -> None:
     p_clean.set_defaults(func=lambda a: cmd_cleanup(cfg, a))
 
     args = parser.parse_args()
-    args.func(args)
+    if args.cmd not in LOCKED_COMMANDS:
+        args.func(args)
+        return
+    try:
+        with pipeline_lock(cfg):
+            # 持锁期间不可能有其他流水线进程，遗留的中间态一定是崩溃残留，可安全回退
+            init_db(cfg)
+            if args.cmd != "recover":
+                changed = recover_stale(cfg)
+                if any(changed.values()):
+                    print(f"[recover] 回退遗留中间态: {changed}")
+            args.func(args)
+    except LockBusy as e:
+        print(e)
+        sys.exit(3)
 
 
 if __name__ == "__main__":

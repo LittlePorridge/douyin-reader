@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import Config
-from .db import connect, upsert_video, now_ts
+from .db import connect, upsert_video
 from sqlite3 import Row as sqlite3_Row_like
+
+
+JSONL_GLOB = "creator_contents_*.jsonl"
 
 
 @dataclass
@@ -16,40 +19,61 @@ class ImportResult:
     failed_count: int = 0
 
 
-def _parse_jsonl(jsonl_path: Path) -> list[dict]:
+def jsonl_offsets(cfg: Config) -> dict[str, int]:
+    """抓取前记录每个 jsonl 的当前大小。抓取后据此只导入本次新追加的行。
+    MediaCrawler 按日期命名、同一天多次抓取会追加到同一文件，
+    所以不能只取“最新文件”，否则会把其他博主的记录导入到当前博主名下。"""
+    if not cfg.jsonl_dir.exists():
+        return {}
+    return {str(p): p.stat().st_size for p in cfg.jsonl_dir.glob(JSONL_GLOB)}
+
+
+def _read_appended_lines(path: Path, start: int) -> list[str]:
+    size = path.stat().st_size
+    # 文件被截断/轮转（size < start）时从头读，避免漏数据
+    if size < start:
+        start = 0
+    if size == start:
+        return []
+    with path.open("rb") as f:
+        f.seek(start)
+        data = f.read(size - start)
+    return data.decode("utf-8", errors="replace").splitlines()
+
+
+def _parse_lines(lines: list[str], source: str) -> list[dict]:
     records: list[dict] = []
-    with jsonl_path.open("r", encoding="utf-8") as f:
-        for line_no, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                print(f"[importer] skip bad line {line_no}: {e}")
+    for line_no, line in enumerate(lines, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError as e:
+            print(f"[importer] skip bad line {source}:{line_no}: {e}")
     return records
 
 
-def _find_latest_jsonl(cfg: Config, sec_user_id: str) -> Path | None:
-    pattern = "creator_contents_*.jsonl"
-    files = sorted(cfg.jsonl_dir.glob(pattern), key=lambda p: p.stat().st_mtime)
-    if not files:
-        return None
-    return files[-1]
-
-
-def import_latest(cfg: Config, sec_user_id: str, max_new: int = 0) -> ImportResult:
-    jsonl_path = _find_latest_jsonl(cfg, sec_user_id)
-    if jsonl_path is None:
-        print(f"[importer] no jsonl found under {cfg.jsonl_dir}")
-        return ImportResult()
-
-    print(f"[importer] reading {jsonl_path.name}")
-    records = _parse_jsonl(jsonl_path)
-    print(f"[importer] parsed {len(records)} records")
-
+def import_since(cfg: Config, sec_user_id: str, start_offsets: dict[str, int],
+                 max_new: int = 0) -> ImportResult:
+    """导入自 start_offsets 以来新追加的 jsonl 记录，归属到 sec_user_id。
+    - max_new > 0 时最多新增 max_new 条 new 视频
+    - 已存在的 aweme_id 只更新统计字段，不改 status
+    """
     result = ImportResult()
-    newAdded = 0
+    if not cfg.jsonl_dir.exists():
+        print(f"[importer] jsonl dir missing: {cfg.jsonl_dir}")
+        return result
+
+    records: list[dict] = []
+    for path in sorted(cfg.jsonl_dir.glob(JSONL_GLOB)):
+        lines = _read_appended_lines(path, start_offsets.get(str(path), 0))
+        if lines:
+            print(f"[importer] {path.name}: {len(lines)} new lines")
+        records.extend(_parse_lines(lines, path.name))
+    print(f"[importer] parsed {len(records)} new records for {sec_user_id[:12]}...")
+
+    new_added = 0
     for rec in records:
         aweme_id = rec.get("aweme_id")
         if not aweme_id:
@@ -60,8 +84,8 @@ def import_latest(cfg: Config, sec_user_id: str, max_new: int = 0) -> ImportResu
         is_new = upsert_video(cfg, rec)
         if is_new:
             result.new_count += 1
-            newAdded += 1
-            if max_new > 0 and newAdded >= max_new:
+            new_added += 1
+            if max_new > 0 and new_added >= max_new:
                 print(f"[importer] reached max_new={max_new}, stopping early")
                 break
         else:
@@ -76,28 +100,11 @@ def ensure_video_paths(cfg: Config, aweme_id: str) -> None:
     paths["video"].parent.mkdir(parents=True, exist_ok=True)
 
 
-def mark_video_downloaded(cfg: Config, aweme_id: str, video_path: Path) -> None:
-    with connect(cfg) as conn:
-        conn.execute(
-            """UPDATE videos SET status='downloaded', video_path=?, downloaded_at=?
-               WHERE aweme_id=? AND status='new'""",
-            (str(video_path.relative_to(cfg.data_dir)), now_ts(), aweme_id),
-        )
-
-
 def list_pending_download(cfg: Config, limit: int = 50) -> list[sqlite3_Row_like]:
-    """status='new' 且 mp4 文件已落地的视频才转 downloaded"""
+    """status='new' 的视频（mp4 是否落地由 transcribe/promote 阶段确认）"""
     with connect(cfg) as conn:
         rows = conn.execute(
             "SELECT * FROM videos WHERE status='new' ORDER BY create_time DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return rows
-
-
-if __name__ == "__main__":
-    from .config import load_config
-    cfg = load_config()
-    sec = "MS4wLjABAAAAxIFxCc7GbORVk16hLf77GZxEW4l7KseaCFKEPEcNOwXpPPtKt4kO2mMUjF44jOBf"
-    r = import_latest(cfg, sec)
-    print(r)

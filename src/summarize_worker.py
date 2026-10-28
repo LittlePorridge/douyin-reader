@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from .config import Config
-from .db import connect, now_ts
+from .db import connect, now_ts, TickResult
 from .llm_client import LLMProvider, _parse_json_lenient
 
 
@@ -260,8 +260,11 @@ def summarize_one(cfg: Config, aweme_id: str, provider: LLMProvider) -> bool:
             if hasattr(provider, "temperature"):
                 orig_t = provider.temperature
                 provider.temperature = 0.1
-                raw = provider.chat(messages)
-                provider.temperature = orig_t
+                try:
+                    raw = provider.chat(messages)
+                finally:
+                    # 无论重试成功与否都恢复温度，避免影响同一批次后续视频
+                    provider.temperature = orig_t
             data = _parse_json_lenient(raw)
             _validate_llm_json(data)
         duration = time.time() - t0
@@ -289,7 +292,8 @@ def summarize_one(cfg: Config, aweme_id: str, provider: LLMProvider) -> bool:
         if row["status"] == "transcribed":
             with connect(cfg) as conn:
                 _mark_failed(conn, aweme_id, str(e))
-        return False
+        # 重新抛出：让编排器/子进程拿到非零退出码，banner 才能正确报红
+        raise
 
 
 def summarize_with_all_providers(cfg: Config, aweme_id: str, force: bool = False) -> dict:
@@ -312,17 +316,25 @@ def summarize_with_all_providers(cfg: Config, aweme_id: str, force: bool = False
     return results
 
 
-def tick(cfg: Config, provider: LLMProvider, max_process: int = 5) -> int:
-    processed = 0
+def tick(cfg: Config, provider: LLMProvider, max_process: int = 5) -> TickResult:
+    """处理一批待摘要视频。单条失败只记录，不中断本批次。"""
+    res = TickResult()
     with connect(cfg) as conn:
         rows = conn.execute(
-            "SELECT aweme_id FROM videos WHERE status='transcribed' ORDER BY create_time DESC LIMIT ?",
-            (max_process,),
+            "SELECT aweme_id FROM videos WHERE status='transcribed' ORDER BY create_time DESC",
         ).fetchall()
     for row in rows:
-        if summarize_one(cfg, row["aweme_id"], provider):
-            processed += 1
-    return processed
+        if res.attempted >= max_process:
+            break
+        try:
+            if summarize_one(cfg, row["aweme_id"], provider):
+                res.ok += 1
+            else:
+                res.skipped += 1
+        except Exception as e:
+            res.failed += 1
+            print(f"[summarize] {row['aweme_id']} failed, continue batch: {e!r}")
+    return res
 
 
 if __name__ == "__main__":

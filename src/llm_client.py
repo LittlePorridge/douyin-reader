@@ -165,7 +165,9 @@ def _parse_json_lenient(raw: str) -> dict:
     end = s.rfind("}")
     if end != -1 and end < len(s):
         s = s[: end + 1]
-    return json.loads(s)
+    # strict=False：允许字符串内出现未转义的换行/制表符（LLM 输出里常见，
+    # 数据库中 summarize_failed 的 "Invalid control character" 即由此产生）
+    return json.loads(s, strict=False)
 
 
 def load_provider_from_yaml(yaml_path: Path) -> LLMProvider:

@@ -6,8 +6,8 @@ import time
 from pathlib import Path
 
 from .config import Config
-from .db import connect, now_ts
-from .asr_client import load_asr_provider, load_asr_provider_from_dict, ASRProvider, LocalWhisperProvider
+from .db import connect, now_ts, TickResult
+from .asr_client import load_asr_provider, load_asr_provider_from_dict, LocalWhisperProvider
 
 
 def _claim(conn: sqlite3.Connection, aweme_id: str, from_status: str, to_status: str) -> bool:
@@ -51,8 +51,10 @@ def _get_whisper():
     return _whisper_model
 
 
-def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -> None:
-    """处理单条：new → downloaded → transcribing → transcribed"""
+def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -> bool:
+    """处理单条：new → downloaded → transcribing → transcribed。
+    返回 True 表示真正执行了转写；False 表示前置条件不满足被跳过。
+    失败时抛出异常（状态已写为 transcribe_failed）。"""
     paths = cfg.paths_for(aweme_id)
     video_path = paths["video"]
     transcript_path = paths["transcript"]
@@ -64,14 +66,14 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
         ).fetchone()
         if row is None:
             print(f"[transcribe] {aweme_id} not in db, skip")
-            return
+            return False
         status = row["status"]
 
         # 如果是 new，先确认 mp4 落地后改 downloaded
         if status == "new":
             if not video_path.exists():
                 print(f"[transcribe] {aweme_id} mp4 missing, skip (status stays new)")
-                return
+                return False
             conn.execute(
                 "UPDATE videos SET status='downloaded', video_path=?, downloaded_at=? WHERE aweme_id=?",
                 (str(video_path.relative_to(cfg.project_root)), now_ts(), aweme_id),
@@ -79,11 +81,21 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
             status = "downloaded"
 
         if status != "downloaded":
-            return
+            return False
+
+        # downloaded 但 mp4 已不存在（被误删或清理）：回退到 new，等待下次抓取重新下载，
+        # 不能让 ASR 去读一个不存在的文件后报出含糊的错误
+        if not video_path.exists():
+            conn.execute(
+                "UPDATE videos SET status='new', status_message=? WHERE aweme_id=? AND status='downloaded'",
+                ("mp4 缺失，等待重新下载", aweme_id),
+            )
+            print(f"[transcribe] {aweme_id} mp4 missing, reverted to new")
+            return False
 
         # 抢占状态
         if not _claim(conn, aweme_id, "downloaded", "transcribing"):
-            return
+            return False
 
     print(f"[transcribe] {aweme_id} start")
     print(f"[transcribe] ▶ NOW 正在处理: {aweme_id}")
@@ -93,7 +105,7 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
         if _try_extract_audio(video_path, audio_path):
             print(f"[transcribe] audio extracted to {audio_path.name}")
         else:
-            print(f"[transcribe] ffmpeg unavailable, ASR reads mp4 directly")
+            print("[transcribe] ffmpeg unavailable, ASR reads mp4 directly")
             audio_for_asr = video_path
 
         # 加载 ASR provider
@@ -142,10 +154,14 @@ def transcribe_one(cfg: Config, aweme_id: str, audio_path: Path | None = None) -
                  now_ts(), audio_duration, duration, aweme_id),
             )
         print(f"[transcribe] {aweme_id} done -> transcribed")
+        return True
     except Exception as e:
         print(f"[transcribe] {aweme_id} failed: {e!r}")
         with connect(cfg) as conn:
             _mark_failed(conn, aweme_id, str(e), "transcribe_failed")
+        # 重新抛出：让上层编排器/子进程拿到非零退出码，
+        # 否则后台任务追踪只看 returncode 会误报"成功"
+        raise
 
 
 def _try_extract_audio(video_path: Path, audio_out: Path) -> bool:
@@ -207,20 +223,27 @@ def _fmt_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
-def tick(cfg: Config, max_process: int = 5) -> int:
-    """处理一批：先确 status=new 的有人 mp4 转 downloaded，再处理 downloaded 的"""
-    processed = 0
+def tick(cfg: Config, max_process: int = 5) -> TickResult:
+    """处理一批待转写视频。单条失败只记录，不中断本批次。"""
+    res = TickResult()
     with connect(cfg) as conn:
         rows = conn.execute(
-            "SELECT aweme_id FROM videos WHERE status='new' OR status='downloaded' ORDER BY create_time DESC LIMIT ?",
-            (max_process * 2,),
+            "SELECT aweme_id FROM videos WHERE status IN ('new', 'downloaded') "
+            "ORDER BY create_time DESC",
         ).fetchall()
     for row in rows:
-        if processed >= max_process:
+        # 跳过的条目不计入批次配额，避免 mp4 缺失的记录堵住后面的队列
+        if res.attempted >= max_process:
             break
-        transcribe_one(cfg, row["aweme_id"])
-        processed += 1
-    return processed
+        try:
+            if transcribe_one(cfg, row["aweme_id"]):
+                res.ok += 1
+            else:
+                res.skipped += 1
+        except Exception as e:
+            res.failed += 1
+            print(f"[transcribe] {row['aweme_id']} failed, continue batch: {e!r}")
+    return res
 
 
 if __name__ == "__main__":

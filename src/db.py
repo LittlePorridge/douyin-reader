@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
@@ -10,6 +11,21 @@ from .config import Config
 
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+
+# 单条视频自动重试上限（对应 CLAUDE.md 的失败处理策略）
+MAX_RETRY = 3
+
+
+@dataclass
+class TickResult:
+    """一次 worker tick 的结果：ok=成功处理，skipped=跳过（前置条件不满足），failed=失败"""
+    ok: int = 0
+    skipped: int = 0
+    failed: int = 0
+
+    @property
+    def attempted(self) -> int:
+        return self.ok + self.failed
 
 
 def init_db(cfg: Config) -> None:
@@ -126,3 +142,38 @@ def upsert_video(cfg: Config, record: dict) -> bool:
             ),
         )
         return existing is None
+
+
+def requeue_failed(cfg: Config) -> dict:
+    """把可重试的失败记录放回待处理状态；重试次数耗尽的转 manual_failed。
+    返回各类变更的行数，便于日志输出。"""
+    with connect(cfg) as conn:
+        exhausted = conn.execute(
+            """UPDATE videos SET status='manual_failed'
+               WHERE status IN ('transcribe_failed', 'summarize_failed') AND retry_count>=?""",
+            (MAX_RETRY,),
+        ).rowcount
+        asr = conn.execute(
+            """UPDATE videos SET status='downloaded'
+               WHERE status='transcribe_failed' AND retry_count<?""",
+            (MAX_RETRY,),
+        ).rowcount
+        llm = conn.execute(
+            """UPDATE videos SET status='transcribed'
+               WHERE status='summarize_failed' AND retry_count<?""",
+            (MAX_RETRY,),
+        ).rowcount
+    return {"manual_failed": exhausted, "requeued_asr": asr, "requeued_llm": llm}
+
+
+def recover_stale(cfg: Config) -> dict:
+    """进程被杀后遗留的中间态（transcribing/summarizing）回退到上一个稳定状态。
+    注意：只能在没有任何 worker 在运行时调用，否则会误回退正在处理的视频。"""
+    with connect(cfg) as conn:
+        t = conn.execute(
+            "UPDATE videos SET status='downloaded' WHERE status='transcribing'"
+        ).rowcount
+        s = conn.execute(
+            "UPDATE videos SET status='transcribed' WHERE status='summarizing'"
+        ).rowcount
+    return {"transcribing_reset": t, "summarizing_reset": s}
